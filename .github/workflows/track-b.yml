@@ -8,9 +8,7 @@ jobs:
   d3d12:
     runs-on: macos-15
     timeout-minutes: 35
-    env:
-      GAMEPORT_BUILD: ${{ runner.temp }}/gameport-build
     steps:
       - uses: actions/checkout@v4
-      - run: bash Scripts/build-vkd3d-proton.sh
-      - run: file "$GAMEPORT_BUILD"/*/overlay/x86_64-windows/*.dll
+      - run: GAMEPORT_BUILD="$RUNNER_TEMP/gameport-build" bash Scripts/build-vkd3d-proton.sh
+      - run: file "$RUNNER_TEMP"/gameport-build/*/overlay/x86_64-windows/*.dll

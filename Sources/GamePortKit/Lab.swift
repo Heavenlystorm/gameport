@@ -132,6 +132,7 @@ public struct LabResult: Codable, Sendable {
     public var renderer: Renderer
     public var sync: SyncMode
     public var engineID: String
+    public var engineArchitecture: EngineArchitecture? = nil
     public var macOS: String
     public var machine: String
     public var startedAt: Date
@@ -272,17 +273,19 @@ extension GamePort {
     /// Launches the profile's game with `renderer` (nil = its own choice) for `seconds`, measures it and
     /// stops everything. The profile is put back exactly as it was. Results land in profiles/<id>/lab/.
     public func lab(_ profileID: String, renderer: Renderer? = nil, seconds: Int = 180,
+                    sync: SyncMode? = nil, vulkanDriver: VulkanDriver? = nil,
                     steadyAfter: TimeInterval = 60, progress: ProgressHandler? = nil) async throws -> LabResult {
         guard seconds > 0 else { throw GamePortError.invalid("Lab duration must be positive") }
         let original = try profiles.load(profileID)
         var trial = original
         if let renderer { trial.renderer = renderer }
+        if let sync { trial.sync = sync }
+        if let vulkanDriver { trial.vulkanDriver = vulkanDriver }
         trial.metalHUD = true
         trial.environment["MTL_HUD_LOG_ENABLED"] = "1"
-        try profiles.save(trial)
-        defer { try? profiles.save(original) }
-
-        let runner = try self.runner(for: profileID)
+        let runner = try self.runner(for: trial)
+        try runner.engine.checkHost()
+        try runner.engine.checkFiles()
         let steam = SteamClient(runner: runner)
         guard runner.recipe?.steamAppID != nil else { throw GamePortError.unsupported("\(profileID): the lab only runs Steam games") }
         let labDir = profiles.directory(profileID).appendingPathComponent("lab", isDirectory: true)
@@ -309,6 +312,8 @@ extension GamePort {
         let cefStart = size(cefLog), bootstrapStart = size(bootstrapLog)
         var thermalSamples = [LabThermalState.current()].compactMap { $0 }
         _ = try steam.play()
+        var stopped = false
+        defer { if !stopped { try? runner.killAll() } }
         var front: [Bool] = []
         var gamePIDs = Set<Int>()
         func runningGamePIDs() -> Set<Int> {
@@ -325,13 +330,18 @@ extension GamePort {
             let frames = LabResult.gameSamples(samples, gamePIDs: gamePIDs).map(\.frame).max() ?? 0
             progress?("\(elapsed) s: \(Int(frames)) frames")
         }
-        if seconds % 30 != 0 { try await Task.sleep(nanoseconds: UInt64(seconds % 30) * 1_000_000_000) }
+        if seconds % 30 != 0 {
+            try await Task.sleep(nanoseconds: UInt64(seconds % 30) * 1_000_000_000)
+            gamePIDs.formUnion(runningGamePIDs())
+        }
         let end = Date().timeIntervalSince1970
         let finalPIDs = runningGamePIDs()
         let gameExited = !gamePIDs.isEmpty && finalPIDs.isEmpty
         gamePIDs.formUnion(finalPIDs)
         if let thermal = LabThermalState.current() { thermalSamples.append(thermal) }
         try runner.killAll()
+        guard try runner.waitForServer(timeout: 15) else { throw GamePortError.invalid("Wine is still running in \(profileID)") }
+        stopped = true
         stream.terminate()
         stream.waitUntilExit()
 
@@ -345,7 +355,8 @@ extension GamePort {
                                             bootstrap: Self.tail(of: bootstrapLog, from: bootstrapStart), gameExited: gameExited)
         let result = LabResult(
             profileID: profileID, recipeID: original.recipeID, renderer: runner.effectiveRenderer, sync: runner.effectiveSync,
-            engineID: runner.engine.id, macOS: Shell.macOSVersionString, machine: Shell.machineDescription,
+            engineID: runner.engine.id, engineArchitecture: runner.engine.manifest.arch,
+            macOS: Shell.macOSVersionString, machine: Shell.machineDescription,
             startedAt: startedAt, seconds: seconds, verdict: LabResult.verdict(samples, end: end, frontmostShare: frontmostShare,
                                                                          gameStarted: gameSeen, crashSigns: crashSigns, gameExited: gameExited),
             steady: LabStats.from(samples, after: startedAt.timeIntervalSince1970 + steadyAfter),
@@ -440,6 +451,44 @@ extension GamePort {
             list.append(r)
         }
         return list.filter { $0 != .wined3d }
+    }
+
+    /// Compare two independently installed copies with the primary profile's renderer, sync and Vulkan driver.
+    /// Preflight both before either run and keep each result in its own profile's history.
+    func comparisonRunners(_ id: String, with otherID: String,
+                           checkHost: (InstalledEngine) throws -> Void = { try $0.checkHost() }) throws -> [WineRunner] {
+        let first = try runner(for: id)
+        let other = try enginePair(first.profile, otherID: otherID)
+        let renderer = first.effectiveRenderer, sync = first.effectiveSync, driver = first.effectiveVulkanDriver
+        return try [first.profile, other].map { profile in
+            var candidate = profile
+            candidate.renderer = renderer
+            candidate.sync = sync
+            candidate.vulkanDriver = driver
+            let runner = try self.runner(for: candidate)
+            try checkHost(runner.engine)
+            try runner.engine.checkFiles()
+            _ = try runner.environment()
+            let steam = SteamClient(runner: runner)
+            guard let appID = runner.recipe?.steamAppID, steam.isInstalled, steam.isGameInstalled(appID: appID) else {
+                throw GamePortError.missing("install the Steam game in profile \(candidate.id) before comparing engines")
+            }
+            return runner
+        }
+    }
+
+    public func compareEngines(_ id: String, with otherID: String, seconds: Int = 180,
+                               progress: ProgressHandler? = nil) async throws -> [LabResult] {
+        let runners = try comparisonRunners(id, with: otherID)
+        var results: [LabResult] = []
+        for runner in runners {
+            progress?("Testing \(runner.profile.id) on \(runner.engine.id)")
+            let run = try await lab(runner.profile.id, renderer: runner.effectiveRenderer, seconds: seconds,
+                                    sync: runner.effectiveSync, vulkanDriver: runner.effectiveVulkanDriver, progress: progress)
+            progress?("\(run.engineID): \(run.summary)")
+            results.append(run)
+        }
+        return results
     }
 
     /// Runs the lab once per candidate renderer and switches the profile to the fastest one that works.

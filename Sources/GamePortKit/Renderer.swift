@@ -61,6 +61,7 @@ public enum Renderer: String, Codable, Sendable, CaseIterable {
             env["WINEDLLPATH_PREPEND"] = withD9VK([try dir("dxmt").appendingPathComponent("wine").path])
             env["WINEDLLOVERRIDES"] = "dxgi,d3d11,d3d10core" + (d9vk != nil ? ",d3d9" : "") + "=n,b"
         case .d3dmetal:
+            guard engine.manifest.arch == .rosetta else { throw GamePortError.unsupported("D3DMetal requires an x86_64 engine") }
             let d3dm = try dir("d3dmetal")
             var overlays = [d3dm.appendingPathComponent("wine").path]
             // D3DMetal is 64-bit only: 32-bit D3D10/11 falls through to DXMT instead of wined3d.

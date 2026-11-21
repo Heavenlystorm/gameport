@@ -1,4 +1,14 @@
 import Foundation
+#if canImport(Darwin)
+import Darwin
+#endif
+
+public enum EngineArchitecture: String, Codable, Sendable {
+    case rosetta = "x86_64"
+    case fex = "arm64"
+
+    public var label: String { self == .rosetta ? "x86_64 · Rosetta" : "arm64 · FEX" }
+}
 
 /// An engine is assembled from pinned, SHA-256-verified components (Wine, its runtime
 /// frameworks, renderer overlays, tools). The manifest is data: bumping an engine is a JSON change.
@@ -38,7 +48,15 @@ public struct EngineManifest: Codable, Sendable, Equatable {
     public var schema: Int
     public var id: String
     public var displayName: String
-    public var arch: String               // x86_64 (runs under Rosetta 2) | arm64
+    public var arch: EngineArchitecture
+    /// Paths inside a native Wine build to its FEX x64 and x86 guest modules.
+    public struct FEXModules: Codable, Sendable, Equatable {
+        public var x64: String
+        public var x86: String
+    }
+    public var fexModules: FEXModules?
+    /// The loader honors CX_LIBVULKAN and the engine includes a matching MoltenVK.
+    public var supportsKosmicKrisp: Bool?
     public var minMacOS: String
     public var wineLoader: String         // relative path of the wine binary
     public var wineServer: String
@@ -47,7 +65,7 @@ public struct EngineManifest: Codable, Sendable, Equatable {
     public var licenses: [String: License]
     public var notes: [String]
 
-    public var requiresRosetta: Bool { arch == "x86_64" }
+    public var requiresRosetta: Bool { arch == .rosetta }
 
     public static func load(_ url: URL) throws -> EngineManifest {
         let manifest = try JSONDecoder().decode(EngineManifest.self, from: Data(contentsOf: url))
@@ -58,6 +76,21 @@ public struct EngineManifest: Codable, Sendable, Equatable {
     public func validate() throws {
         try validateID(id, what: "engine id")
         guard schema == 1 else { throw GamePortError.unsupported("engine manifest schema \(schema)") }
+        let version = minMacOS.components(separatedBy: ".")
+        guard (1...3).contains(version.count), version.allSatisfy({ !$0.isEmpty && $0.allSatisfy { $0.isASCII && $0.isNumber } && Int($0) != nil }) else {
+            throw GamePortError.invalid("minimum macOS version \(minMacOS)")
+        }
+        for path in [wineLoader, wineServer] {
+            guard !(try Archive.safeSubpath(path)).isEmpty else { throw GamePortError.invalid("empty Wine executable path") }
+        }
+        if arch == .fex {
+            guard let fexModules else { throw GamePortError.missing("FEX module paths for \(id)") }
+            for (path, name) in [(fexModules.x64, "xtajit64.dll"), (fexModules.x86, "xtajit.dll")] {
+                guard try Archive.safeSubpath(path).split(separator: "/").last?.lowercased() == name else {
+                    throw GamePortError.invalid("expected a relative path to \(name)")
+                }
+            }
+        }
         var names = Set<String>()
         for c in components {
             guard names.insert(c.name).inserted else { throw GamePortError.invalid("duplicate component \(c.name)") }
@@ -81,6 +114,37 @@ public struct InstalledEngine: Sendable {
     public var wine: URL { root.appendingPathComponent(manifest.wineLoader) }
     public var wineServer: URL { root.appendingPathComponent(manifest.wineServer) }
     public var frameworks: URL { root.appendingPathComponent("frameworks", isDirectory: true) }
+
+    public var supportsKosmicKrisp: Bool {
+        manifest.supportsKosmicKrisp ?? (manifest.arch == .rosetta && id == "x64-crossover26.3-hb20261014")
+    }
+
+    func checkFiles() throws {
+        let fm = FileManager.default
+        for file in [wine, wineServer] {
+            var dir: ObjCBool = false
+            guard fm.fileExists(atPath: file.path, isDirectory: &dir), !dir.boolValue, fm.isExecutableFile(atPath: file.path) else {
+                throw GamePortError.missing("engine executable \(file.path)")
+            }
+        }
+        if let modules = manifest.fexModules {
+            for path in [modules.x64, modules.x86] {
+                var dir: ObjCBool = false
+                guard fm.fileExists(atPath: root.appendingPathComponent(path).path, isDirectory: &dir), !dir.boolValue else {
+                    throw GamePortError.missing("FEX module \(path) in \(id)")
+                }
+            }
+        }
+    }
+
+    func checkHost(version: String = Shell.macOSVersionString, appleSilicon: Bool = Shell.isAppleSilicon,
+                   rosetta: () -> Bool = { Shell.rosettaInstalled }) throws {
+        guard appleSilicon else { throw GamePortError.unsupported("GamePort engines require Apple Silicon") }
+        guard manifest.minMacOS.compare(version, options: .numeric) != .orderedDescending else {
+            throw GamePortError.unsupported("\(id) requires macOS \(manifest.minMacOS) or later")
+        }
+        if manifest.requiresRosetta && !rosetta() { throw GamePortError.missing("Rosetta 2 for \(id)") }
+    }
 
     /// A renderer overlay: the engine's own `renderers/<name>` wins over the one the runtime
     /// frameworks bundle (`frameworks/renderer/<name>`), so a newer DXMT can replace the bundled one.
@@ -127,7 +191,8 @@ public struct EngineStore: Sendable {
         let root = paths.engine(id)
         let receipt = root.appendingPathComponent(Self.receiptName)
         guard FileManager.default.fileExists(atPath: receipt.path) else { throw GamePortError.missing("engine \(id) is not installed") }
-        let manifest = try JSONDecoder().decode(EngineManifest.self, from: Data(contentsOf: receipt))
+        let manifest = try EngineManifest.load(receipt)
+        guard manifest.id == id else { throw GamePortError.invalid("engine receipt does not match \(id)") }
         return InstalledEngine(manifest: manifest, root: root)
     }
 
@@ -160,16 +225,47 @@ public struct EngineStore: Sendable {
         let receipt = try JSONEncoder.pretty.encode(manifest)
         try receipt.write(to: staging.appendingPathComponent(Self.receiptName))
 
-        let target = paths.engine(manifest.id)
-        if FileManager.default.fileExists(atPath: target.path) {
-            let old = paths.temp.appendingPathComponent("old-\(manifest.id)-\(UUID().uuidString)")
-            try FileManager.default.moveItem(at: target, to: old)
-            try? FileManager.default.removeItem(at: old)
+        let fresh = InstalledEngine(manifest: manifest, root: staging)
+        try fresh.checkFiles()
+        return try withInstallLock(manifest.id) {
+            let target = paths.engine(manifest.id)
+            if let previous = try? engine(manifest.id), previous.manifest.arch == manifest.arch,
+               fresh.supportsKosmicKrisp, let shim = previous.kosmicKrispShim {
+                let dir = staging.appendingPathComponent("renderers/kosmickrisp")
+                try CopyOnWrite.clone(shim.deletingLastPathComponent(), to: dir)
+                guard fresh.kosmicKrispShim != nil else { throw GamePortError.missing("MoltenVK for the installed KosmicKrisp shim") }
+            }
+            try publish(staging, at: target)
+            return InstalledEngine(manifest: manifest, root: target)
         }
-        try FileManager.default.moveItem(at: staging, to: target)
-        let engine = InstalledEngine(manifest: manifest, root: target)
-        guard FileManager.default.fileExists(atPath: engine.wine.path) else { throw GamePortError.missing("no wine in the engine: \(manifest.wineLoader)") }
-        return engine
+    }
+
+    /// Serialize only publication so downloads and builds can run concurrently.
+    func withInstallLock<T>(_ id: String, _ work: () throws -> T) throws -> T {
+        try validateID(id, what: "engine id")
+        #if canImport(Darwin)
+        try paths.ensure(paths.temp)
+        let fd = open(paths.temp.appendingPathComponent("install-\(id).lock").path, O_RDWR | O_CREAT, 0o600)
+        guard fd >= 0 else { throw GamePortError.invalid("could not open engine install lock") }
+        defer { close(fd) }
+        guard flock(fd, LOCK_EX) == 0 else { throw GamePortError.invalid("could not lock \(id)") }
+        #endif
+        return try work()
+    }
+
+    /// Both trees are on the GamePort volume. After a swap the caller's staging cleanup removes the old one.
+    func publish(_ staging: URL, at target: URL) throws {
+        if !FileManager.default.fileExists(atPath: target.path) {
+            try FileManager.default.moveItem(at: staging, to: target)
+            return
+        }
+        #if canImport(Darwin)
+        guard renameatx_np(AT_FDCWD, staging.path, AT_FDCWD, target.path, UInt32(RENAME_SWAP)) == 0 else {
+            throw GamePortError.invalid("could not replace \(target.lastPathComponent): \(String(cString: strerror(errno)))")
+        }
+        #else
+        _ = try FileManager.default.replaceItemAt(target, withItemAt: staging)
+        #endif
     }
 
     func place(_ c: EngineManifest.Component, file: URL, engineRoot: URL) throws {
@@ -221,8 +317,7 @@ public struct EngineStore: Sendable {
     }
 
     public func remove(_ id: String) throws {
-        try validateID(id, what: "engine id")
-        try FileManager.default.removeItem(at: paths.engine(id))
+        try withInstallLock(id) { try FileManager.default.removeItem(at: paths.engine(id)) }
     }
 }
 

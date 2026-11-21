@@ -26,8 +26,13 @@ public struct GamePort: Sendable {
         let v = Shell.macOSVersion
         checks.append(Check(name: "macOS", ok: v.majorVersion >= 14, detail: "\(v.majorVersion).\(v.minorVersion).\(v.patchVersion) (14 or later required)"))
         checks.append(Check(name: "Apple Silicon", ok: Shell.isAppleSilicon, detail: Shell.isAppleSilicon ? "yes" : "Intel Macs are not supported"))
-        let rosetta = Shell.rosettaInstalled
-        checks.append(Check(name: "Rosetta 2", ok: rosetta, detail: rosetta ? "installed" : "not installed: softwareupdate --install-rosetta --agree-to-license"))
+        let native = engines.installed().contains { engine in
+            engine.manifest.arch == .fex && (try? engine.checkFiles()) != nil && (try? engine.checkHost()) != nil
+        }
+        if !native {
+            let rosetta = Shell.rosettaInstalled
+            checks.append(Check(name: "Rosetta 2", ok: rosetta, detail: rosetta ? "installed" : "needed for the x86_64 engine"))
+        }
         #else
         checks.append(Check(name: "macOS", ok: false, detail: "\(Brand.displayName) runs games on macOS only"))
         #endif
@@ -41,38 +46,61 @@ public struct GamePort: Sendable {
         return try await engines.install(manifest, progress: progress)
     }
 
+    private func selectedEngine(_ id: String?) throws -> InstalledEngine {
+        if let id { return try engines.engine(id) }
+        let all = engines.installed()
+        let defaultID = defaultManifest?.id
+        let ordered = all.filter { $0.id == defaultID } + all.filter { $0.id != defaultID }
+        guard let first = ordered.first else { throw GamePortError.missing("no engine installed") }
+        return ordered.first { (try? $0.checkHost()) != nil && (try? $0.checkFiles()) != nil } ?? first
+    }
+
     /// Creates an isolated environment for a recipe. With a Steam base for the engine the prefix is an
     /// APFS clone of it (seconds, Steam already updated); otherwise a fresh prefix is booted.
     @discardableResult
     public func createProfile(recipeID: String, profileID: String? = nil, engineID: String? = nil, progress: ProgressHandler? = nil) throws -> Profile {
         guard let recipe = catalog[recipeID] else { throw GamePortError.missing("recipe \(recipeID)") }
-        let engine = try engineID.map { try engines.engine($0) } ?? (engines.installed().first ?? { throw GamePortError.missing("no engine installed") }())
+        let engine = try selectedEngine(engineID)
+        try engine.checkHost()
+        try engine.checkFiles()
         let id = profileID ?? recipe.id
         try validateID(id, what: "profile id")
-        if (try? profiles.load(id)) != nil { throw GamePortError.invalid("profile \(id) already exists") }
-        let profile = Profile(id: id, title: recipe.title, recipeID: recipe.id, engineID: engine.id)
-        try profiles.save(profile)
+        try paths.ensure(paths.profiles)
+        // Reserve the ID before booting. Never initialize an existing or partially prepared prefix.
+        let directory = profiles.directory(id)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+        var profile = Profile(id: id, title: recipe.title, recipeID: recipe.id, engineID: engine.id)
+        if engine.manifest.arch == .fex && recipe.renderer == .d3dmetal {
+            profile.renderer = engine.rendererDirectory("dxmt") == nil ? .wined3d : .dxmt
+        }
         // The prefix itself does not need a licence-gated renderer: set it up with wined3d, keep the choice.
         var setupProfile = profile
-        if let license = recipe.renderer.gatingLicense(in: engine.manifest), !licenses.isAccepted(license) {
+        if let license = (profile.renderer ?? recipe.renderer).gatingLicense(in: engine.manifest), !licenses.isAccepted(license) {
             progress?("Note: the game cannot start until the \(license) licence is accepted.")
             setupProfile.renderer = .wined3d
         }
         let runner = WineRunner(paths: paths, engine: engine, profile: setupProfile, recipe: recipe)
         let base = SteamBase(paths: paths, engine: engine)
-        if base.isReady {
-            progress?("Cloning the Steam base…")
-            try base.clone(to: runner.prefix)
-            try runner.settle()
-        } else {
-            progress?("Preparing the Windows environment (1-2 minutes the first time)…")
-            try runner.boot()
+        do {
+            if base.isReady {
+                progress?("Cloning the Steam base…")
+                try base.clone(to: runner.prefix)
+                try runner.settle()
+            } else {
+                progress?("Preparing the Windows environment (1-2 minutes the first time)…")
+                try runner.boot()
+            }
+            try profiles.save(profile)
+        } catch {
+            try? runner.killAll()
+            if (try? runner.waitForServer(timeout: 5)) == true { try? FileManager.default.removeItem(at: directory) }
+            throw error
         }
         return profile
     }
 
     public func steamBase(engineID: String? = nil) throws -> SteamBase {
-        let engine = try engineID.map { try engines.engine($0) } ?? (engines.installed().first ?? { throw GamePortError.missing("no engine installed") }())
+        let engine = try selectedEngine(engineID)
         return SteamBase(paths: paths, engine: engine)
     }
 
@@ -99,12 +127,85 @@ public struct GamePort: Sendable {
 
     public func openSteam(_ profileID: String, progress: ProgressHandler? = nil) throws -> Process {
         if let s = autoSnapshot(profileID) { progress?("Automatic snapshot: \(s.name)") }
-        return try steam(for: profileID).openClient()
+        let process = try steam(for: profileID).openClient()
+        recordLaunch(requested: profileID, actual: profileID)
+        return process
     }
 
     public func play(_ profileID: String, progress: ProgressHandler? = nil) throws -> Process {
-        if let s = autoSnapshot(profileID) { progress?("Automatic snapshot: \(s.name)") }
-        return try steam(for: profileID).play()
+        let runner = try playbackRunner(profileID, progress: progress)
+        let actual = runner.profile.id
+        let steam = SteamClient(runner: runner)
+        if let id = runner.recipe?.steamAppID, !steam.isGameInstalled(appID: id) {
+            progress?("Steam does not yet report the game as installed (appmanifest_\(id)). Trying anyway.")
+        }
+        if let s = autoSnapshot(actual) { progress?("Automatic snapshot: \(s.name)") }
+        progress?("Launching \(actual) on \(runner.engine.id) (\(runner.engine.manifest.arch.label)). Log: \(runner.logs.appendingPathComponent("game.log").path)")
+        let process = try steam.play()
+        recordLaunch(requested: profileID, actual: actual)
+        return process
+    }
+
+    private func recordLaunch(requested: String, actual: String) {
+        let marker = profiles.directory(requested).appendingPathComponent("last-play-profile")
+        try? Data(actual.utf8).write(to: marker, options: .atomic)
+    }
+
+    public func stop(_ id: String) throws {
+        let profile = try profiles.load(id)
+        let marker = profiles.directory(id).appendingPathComponent("last-play-profile")
+        if let last = try? String(contentsOf: marker, encoding: .utf8), last != id,
+           let other = try? enginePair(profile, otherID: last) {
+            try runner(for: other).killAll()
+        } else {
+            try runner(for: profile).killAll()
+        }
+        try? FileManager.default.removeItem(at: marker)
+    }
+
+    func enginePair(_ profile: Profile, otherID: String) throws -> Profile {
+        let other = try profiles.load(otherID)
+        guard let recipe = profile.recipeID, recipe == other.recipeID, profile.engineID != other.engineID else {
+            throw GamePortError.invalid("choose a profile for the same game on a different engine")
+        }
+        return other
+    }
+
+    public func setFallback(_ id: String, to otherID: String?) throws {
+        var profile = try profiles.load(id)
+        if let otherID { _ = try enginePair(profile, otherID: otherID) }
+        profile.fallbackProfileID = otherID
+        try profiles.save(profile)
+    }
+
+    /// Fall back only during engine preflight. Once Steam has been launched it must never be launched twice.
+    func playbackRunner(_ id: String, progress: ProgressHandler? = nil,
+                        checkHost: (InstalledEngine) throws -> Void = { try $0.checkHost() }) throws -> WineRunner {
+        let profile = try profiles.load(id)
+        func available(_ candidate: Profile) throws -> WineRunner {
+            let runner = try self.runner(for: candidate)
+            try checkHost(runner.engine)
+            try runner.engine.checkFiles()
+            _ = try runner.environment()
+            return runner
+        }
+        do { return try available(profile) }
+        catch GamePortError.licenseNotAccepted(let licence) { throw GamePortError.licenseNotAccepted(licence) }
+        catch {
+            guard let otherID = profile.fallbackProfileID else { throw error }
+            let primaryError = error
+            do {
+                let runner = try available(enginePair(profile, otherID: otherID))
+                let steam = SteamClient(runner: runner)
+                guard let appID = runner.recipe?.steamAppID, steam.isInstalled, steam.isGameInstalled(appID: appID) else {
+                    throw GamePortError.missing("install the game in fallback profile \(otherID)")
+                }
+                progress?("Using fallback \(otherID): \(primaryError)")
+                return runner
+            } catch {
+                throw GamePortError.unsupported("\(id): \(primaryError). Fallback \(otherID): \(error)")
+            }
+        }
     }
 
     /// Stops the profile and rolls its prefix (and engine choice) back to a snapshot.
@@ -119,7 +220,10 @@ public struct GamePort: Sendable {
     }
 
     public func runner(for profileID: String) throws -> WineRunner {
-        let profile = try profiles.load(profileID)
+        try runner(for: profiles.load(profileID))
+    }
+
+    func runner(for profile: Profile) throws -> WineRunner {
         let engine = try engines.engine(profile.engineID)
         let recipe = profile.recipeID.flatMap { catalog[$0] }
         return WineRunner(paths: paths, engine: engine, profile: profile, recipe: recipe)

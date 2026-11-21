@@ -1,0 +1,16 @@
+{
+  "arm64": {
+    "name": "kosmickrisp", "kind": "vulkan-driver",
+    "url": "https://github.com/Sikarugir-App/mesa-kosmickrisp/releases/download/20261029/kosmickrisp-arm64.zip",
+    "sha256": "c597a17c708b7ba4a617d90a55f0c84101898dff1db7b10ae976da07d2c1b31a",
+    "size": 2335903, "license": "Mesa (MIT)",
+    "extract": { "subpath": "libvulkan_kosmickrisp.dylib", "into": "libvulkan_kosmickrisp.dylib" }
+  },
+  "x86_64": {
+    "name": "kosmickrisp", "kind": "vulkan-driver",
+    "url": "https://github.com/Sikarugir-App/mesa-kosmickrisp/releases/download/20261029/kosmickrisp-x86_64.zip",
+    "sha256": "5c55c95bfeae56e2ed8dc9ebbf85c702813ae67638f0b544310fd186bb0fc93b",
+    "size": 2433597, "license": "Mesa (MIT)",
+    "extract": { "subpath": "libvulkan_kosmickrisp.dylib", "into": "libvulkan_kosmickrisp.dylib" }
+  }
+}

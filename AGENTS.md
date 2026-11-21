@@ -33,7 +33,7 @@ GamePort is a native macOS app + CLI for running Windows games smoothly on Apple
 # Build and run all unit tests
 swift test
 
-# After editing ANYTHING under Data/ (recipes, engine manifests, anticheat.json):
+# After editing Data/ or Tools/kosmickrisp-shim/shim.c (embedded for installed CLI/app use):
 python3 Scripts/embed-data.py
 
 # Build release CLI
@@ -46,7 +46,10 @@ Scripts/make-app.sh
 Scripts/build-dxvk.sh
 
 # Install KosmicKrisp + GamePort's Vulkan shim into the current engine (macOS 26+)
-Tools/kosmickrisp-shim/install.sh
+.build/release/gameport engine kosmickrisp <engine-id>
+
+# Cross-build the experimental 64-bit D3D12 overlay
+Scripts/build-vkd3d-proton.sh
 ```
 
 Runtime data lives in `~/Library/Application Support/GamePort` (override with `GAMEPORT_HOME` for tests or isolated runs).

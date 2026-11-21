@@ -3,6 +3,7 @@
   "id": "x64-crossover26.3-hb20261014",
   "displayName": "Wine 11.0 (CrossOver 26.3 source) — Intel, Rosetta 2",
   "arch": "x86_64",
+  "supportsKosmicKrisp": true,
   "minMacOS": "14.0",
   "wineLoader": "engine/bin/wine",
   "wineServer": "engine/bin/wineserver",

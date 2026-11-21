@@ -7,7 +7,8 @@ let usage = """
 
 Usage:
   \(cli) doctor                         Check system requirements
-  \(cli) engine install                 Download, verify and install the bundled engine
+  \(cli) engine install [manifest.json] Install the bundled engine or a trusted engine manifest
+  \(cli) engine kosmickrisp <engine>    Install the optional verified Vulkan driver and shim
   \(cli) engine list                    Installed engines
   \(cli) license show apple-gptk        Show the licence summary
   \(cli) license accept apple-gptk      Accept Apple's GPTK licence for D3DMetal
@@ -15,7 +16,8 @@ Usage:
   \(cli) anticheat <game name|Steam id> Before downloading: does anti-cheat block it on a Mac?
   \(cli) base build                     Build the Steam base (once; later profiles are ready in seconds)
   \(cli) base status                    Steam base status
-  \(cli) profile create <recipe> [id]   Create an isolated Windows environment for a game
+  \(cli) profile create <recipe> [id] [--engine <engine>]  Create an isolated game environment
+  \(cli) profile fallback <profile> <other-profile|off>   Select an alternate engine profile for play
   \(cli) profile list                   Profiles
   \(cli) snapshot <profile> [name]      Snapshot a profile (before an update)
   \(cli) snapshot list <profile>        Snapshots
@@ -28,6 +30,7 @@ Usage:
   \(cli) stop <profile>                 Stop everything in a profile
   \(cli) lab <profile> [renderer,…] [s] Start the game, measure FPS and record whether it works
   \(cli) lab <profile> auto [s]         Try every renderer and set the fastest working one
+  \(cli) lab <profile> compare <other-profile> [s]  Compare two engines on the same game
   \(cli) vulkan <profile> [driver]      Vulkan driver for the game: moltenvk (default) or kosmickrisp (experimental)
   \(cli) env <profile>                  Show the game's environment variables
   \(cli) run <profile> <windows command…>  Run a Windows program in a profile
@@ -68,15 +71,24 @@ do {
         exit(allOK ? 0 : 1)
 
     case "engine":
-        switch arg(0, "install|list") {
+        switch arg(0, "install|list|kosmickrisp") {
         case "install":
-            print("Installing the engine (about 440 MB to download)…")
-            let engine = try await gameport.installDefaultEngine(progress: progress)
+            guard args.count <= 2 else { fail(usage) }
+            let engine: InstalledEngine
+            if args.count == 2 {
+                let manifest = try EngineManifest.load(URL(fileURLWithPath: args[1]))
+                engine = try await gameport.engines.install(manifest, progress: progress)
+            } else {
+                engine = try await gameport.installDefaultEngine(progress: progress)
+            }
             print("✓ Installed: \(engine.id)")
+        case "kosmickrisp":
+            guard args.count == 2 else { fail(usage) }
+            try await gameport.engines.installKosmicKrisp(args[1], progress: progress)
         case "list":
             let list = gameport.engines.installed()
             if list.isEmpty { print("No engine installed. Run `\(cli) engine install`.") }
-            for e in list { print("\(e.id)  \(e.manifest.displayName)") }
+            for e in list { print("\(e.id)  \(e.manifest.arch.label)  \(e.manifest.displayName)") }
         default: fail(usage)
         }
 
@@ -166,14 +178,23 @@ do {
         print("Source: highball-db / Are We Anti-Cheat Yet? (MIT)")
 
     case "profile":
-        switch arg(0, "create|list|delete") {
+        switch arg(0, "create|list|delete|fallback") {
         case "create":
             let recipe = arg(1, "recipe")
-            let profile = try gameport.createProfile(recipeID: recipe, profileID: args.count > 2 ? args[2] : nil, progress: progress)
+            var options = Array(args.dropFirst(2))
+            let id = options.first.map { !$0.hasPrefix("--") } == true ? options.removeFirst() : nil
+            guard options.isEmpty || (options.count == 2 && options[0] == "--engine") else { fail(usage) }
+            let profile = try gameport.createProfile(recipeID: recipe, profileID: id, engineID: options.last, progress: progress)
             let next = (try? gameport.steam(for: profile.id).isInstalled) == true ? "\(cli) steam open" : "\(cli) steam install"
             print("✓ Profile ready: \(profile.id). Next: \(next) \(profile.id)")
         case "list":
-            for p in gameport.profiles.all() { print("\(p.id)  \(p.title)  [\(p.engineID)]") }
+            for p in gameport.profiles.all() {
+                print("\(p.id)  \(p.title)  [\(p.engineID)]" + (p.fallbackProfileID.map { "  fallback: \($0)" } ?? ""))
+            }
+        case "fallback":
+            guard args.count == 3 else { fail(usage) }
+            try gameport.setFallback(args[1], to: args[2] == "off" ? nil : args[2])
+            print("Fallback for \(args[1]): \(args[2])")
         case "delete":
             let id = arg(1, "profile")
             guard confirm("Profile \(id) and everything in it (installed games, saves) will be deleted. Are you sure?") else { fail("cancelled") }
@@ -197,15 +218,16 @@ do {
 
     case "play":
         let id = arg(0, "profile")
-        let steam = try gameport.steam(for: id)
-        if let appID = steam.runner.recipe?.steamAppID, !steam.isGameInstalled(appID: appID) {
-            print("Warning: Steam does not show the game as fully installed yet (appmanifest_\(appID)). Trying anyway.")
-        }
         let p = try gameport.play(id, progress: progress)
-        print("Game started (pid \(p.processIdentifier)). Log: \(gameport.profiles.logs(id).appendingPathComponent("game.log").path)")
+        print("Game started (pid \(p.processIdentifier)).")
 
     case "lab":
         let id = arg(0, "profile")
+        if args.dropFirst().first == "compare" {
+            guard (3...4).contains(args.count), let duration = Int(args.count == 4 ? args[3] : "180"), duration > 0 else { fail(usage) }
+            _ = try await gameport.compareEngines(id, with: args[2], seconds: duration, progress: progress)
+            exit(0)
+        }
         var renderers: [Renderer?] = [nil]
         var seconds = 180
         var auto = false
@@ -238,7 +260,7 @@ do {
         print("Details: \(gameport.profiles.directory(id).appendingPathComponent("lab").path)")
 
     case "stop":
-        try gameport.runner(for: arg(0, "profile")).killAll()
+        try gameport.stop(arg(0, "profile"))
         print("✓ Stopped.")
 
     case "vulkan":
@@ -250,7 +272,7 @@ do {
         }
         guard let driver = VulkanDriver(rawValue: args[1]) else { fail("unknown Vulkan driver \(args[1]) (moltenvk, kosmickrisp)") }
         if driver == .kosmickrisp, try gameport.runner(for: id).engine.kosmicKrispShim == nil {
-            fail("KosmicKrisp is not installed in this profile's engine. Install it with Tools/kosmickrisp-shim/install.sh")
+            fail("Install the optional driver with \(cli) engine kosmickrisp \(profile.engineID)")
         }
         profile.vulkanDriver = driver == .moltenvk ? nil : driver
         try gameport.profiles.save(profile)

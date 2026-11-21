@@ -56,7 +56,7 @@ public struct WineRunner: Sendable {
         if profile.metalHUD { env["MTL_HUD_ENABLED"] = "1" }
         if effectiveVulkanDriver == .kosmickrisp {
             guard let shim = engine.kosmicKrispShim else {
-                throw GamePortError.missing("KosmicKrisp in \(engine.id) (install it with Tools/kosmickrisp-shim/install.sh)")
+                throw GamePortError.missing("KosmicKrisp in \(engine.id) (run \(Brand.cliName) engine kosmickrisp \(engine.id))")
             }
             // CrossOver's win32u loads the Vulkan library CX_LIBVULKAN names, but only while the backend is
             // "wined3d"; nothing else in the engine reads CX_ACTIVE_GRAPHICS_BACKEND. The shim then sends only
@@ -66,6 +66,7 @@ public struct WineRunner: Sendable {
         }
         env = mergeEnvironment(env, profile.environment)
         env = mergeEnvironment(env, extra)
+        if engine.manifest.arch == .fex { env.removeValue(forKey: "ROSETTA_ADVERTISE_AVX") }
         return env
     }
 
@@ -91,6 +92,10 @@ public struct WineRunner: Sendable {
     }
 
     func prepareDirectories() throws {
+        if engine.manifest.arch == .fex {
+            try engine.checkHost()
+            try engine.checkFiles()
+        }
         try paths.ensure(home, home.appendingPathComponent("tmp"), home.appendingPathComponent("cache"), logs)
     }
 

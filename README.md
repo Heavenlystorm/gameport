@@ -45,6 +45,11 @@ keeps a byte-for-byte backup beside each file it changes. The log names the back
 can also supply named REG_SZ and REG_DWORD defaults under the game's Wine AppDefaults registry key.
 Existing values take precedence on every run.
 
+With the game and Steam closed, `gameport config <profile> controller` adds missing WineBus settings
+for SDL controllers (SDL on, hidraw off). `gameport config <profile> opengl` disables Wine's fullscreen
+display capture for OpenGL titles that blank the Mac display. Both presets act on the selected
+profile only and preserve existing registry values, including those set by earlier GamePort releases.
+
 **Snapshots.** Before a Steam, game or engine update, `gameport snapshot <profile>` saves the profile's state;
 if something breaks, `gameport snapshot restore <profile> <name>` rolls it back. An automatic snapshot is taken
 before Steam's first start each day (the newest two are kept; turn it off with
@@ -58,6 +63,13 @@ counts as "not measured", unless the game process never started or the log shows
 `gameport lab <profile> auto` ("Find the best renderer" in the app) tries DXMT, D3DMetal (once Apple's licence
 is accepted) and DXVK in turn, and sets the profile to the one with the highest average FPS after warm-up
 among those that worked to the end.
+
+With macOS Screen Recording access enabled for GamePort (or your terminal for the CLI), the Lab
+also samples the foreground game window every five seconds after warm-up. It discards each image
+after computing its brightness and perceptual hash. A window that stays black for the final 20 seconds
+is recorded as a black screen. An unchanged image with advancing HUD frames can be an idle menu or
+a freeze. This result is inconclusive and cannot win automatic renderer selection. If capture is
+unavailable, the Lab continues with its HUD and process checks.
 
 The Lab reports 1% low FPS as 1000 divided by the 99th-percentile present interval in milliseconds.
 It needs at least 100 unredacted frame intervals from the measured game in that phase of the run.

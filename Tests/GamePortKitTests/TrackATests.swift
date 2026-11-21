@@ -56,6 +56,9 @@ final class LabMeasurementTests: XCTestCase {
     }
 
     func testThermalRoundTripAndOlderResults() throws {
+        XCTAssertNil(LabThermalState.peak([]))
+        XCTAssertEqual(LabThermalState.peak([.nominal, .serious, .fair]), .serious)
+        XCTAssertNil(LabThermalState(rawValue: 99))
         let legacy = #"{"profileID":"g","renderer":"dxmt","sync":"msync","engineID":"e","macOS":"15","machine":"Mac","startedAt":0,"seconds":2,"verdict":"works","hudLog":"hud","whole":{"frames":120,"seconds":2,"averageFPS":60,"typicalFPS":60,"slowestFPS":60,"stalls":0,"stallSeconds":0}}"#
         var run = try JSONDecoder().decode(LabResult.self, from: Data(legacy.utf8))
         XCTAssertNil(run.whole?.onePercentLowFPS)
@@ -83,6 +86,17 @@ final class LabMeasurementTests: XCTestCase {
         }
         XCTAssertEqual(MetalHUDLog.busiestProcess(points), 10)
         XCTAssertEqual(MetalHUDLog.busiestProcess(points.reversed()), 10)
+    }
+
+    func testCounterResetAndGameExitInLastMeasurementWindow() throws {
+        let frames = [200, 220, 5, 25]
+        let samples = frames.enumerated().map { MetalHUDLog.Sample(time: Double($0.offset), pid: 1, frame: Double($0.element)) }
+        let stats = try XCTUnwrap(LabStats.from(samples))
+        XCTAssertEqual(stats.frames, 40)
+        XCTAssertEqual(stats.seconds, 2)
+        XCTAssertEqual(stats.averageFPS, 20)
+        XCTAssertEqual(LabResult.verdict(Array(samples.suffix(2)), end: 4, gameStarted: true, gameExited: true), .stopped)
+        XCTAssertEqual(LabResult.verdict(Array(samples.suffix(2)), end: 4, gameStarted: false), .noFrames)
     }
 }
 

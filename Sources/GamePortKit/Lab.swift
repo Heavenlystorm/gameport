@@ -72,19 +72,23 @@ public struct LabStats: Codable, Sendable, Equatable {
     /// Frame number 0 shows up between real lines (an idle surface or a counter reset) and is skipped.
     public static func from(_ samples: [MetalHUDLog.Sample], after: TimeInterval = 0) -> LabStats? {
         let points = samples.filter { $0.time >= after && $0.frame > 0 }.sorted { $0.time < $1.time }
+        var measuredFrames = 0.0, measuredSeconds = 0.0
         var rates: [(rate: Double, span: Double)] = []
         for (a, b) in zip(points, points.dropFirst()) where b.time > a.time && b.frame >= a.frame {
-            rates.append(((b.frame - a.frame) / (b.time - a.time), b.time - a.time))
+            let frames = b.frame - a.frame, span = b.time - a.time
+            measuredFrames += frames
+            measuredSeconds += span
+            rates.append((frames / span, span))
         }
-        guard let first = points.first, let last = points.last, !rates.isEmpty, last.time > first.time else { return nil }
+        guard !rates.isEmpty, measuredFrames < Double(Int.max) else { return nil }
         let stalls = rates.filter { $0.rate == 0 || $0.span > 2 }
         let sorted = rates.map(\.rate).sorted()
         func r(_ x: Double) -> Double { (x * 10).rounded() / 10 }
         let intervals = points.flatMap(\.presentIntervalsMS).sorted()
         let p99 = intervals.count >= 100 ? intervals[Int(ceil(Double(intervals.count) * 0.99)) - 1] : nil
         let low = p99.map { r(1000 / $0) }.flatMap { $0.isFinite ? $0 : nil }
-        return LabStats(frames: Int(last.frame - first.frame), seconds: r(last.time - first.time),
-                        averageFPS: r((last.frame - first.frame) / (last.time - first.time)),
+        return LabStats(frames: Int(measuredFrames), seconds: r(measuredSeconds),
+                        averageFPS: r(measuredFrames / measuredSeconds),
                         typicalFPS: r(sorted[sorted.count / 2]), slowestFPS: r(sorted[0]),
                         stalls: stalls.count, stallSeconds: r(stalls.map(\.span).reduce(0, +)), onePercentLowFPS: low)
     }
@@ -110,6 +114,8 @@ public enum LabThermalState: Int, Codable, Sendable {
         return nil
         #endif
     }
+
+    static func peak(_ samples: [Self]) -> Self? { samples.max { $0.rawValue < $1.rawValue } }
 }
 
 public struct LabResult: Codable, Sendable {
@@ -176,8 +182,11 @@ public struct LabResult: Codable, Sendable {
     /// A covered window only excuses missing frames when the game is not known to have failed: it never
     /// started, or the log shows a crash (a TF2 run hid a Steam web-helper crash loop this way).
     static func verdict(_ samples: [MetalHUDLog.Sample], end: TimeInterval, window: TimeInterval = 30,
-                        frontmostShare: Double? = nil, gameStarted: Bool? = nil, crashSigns: [String] = []) -> Verdict {
+                        frontmostShare: Double? = nil, gameStarted: Bool? = nil, crashSigns: [String] = [],
+                        gameExited: Bool = false) -> Verdict {
+        if gameStarted == false { return .noFrames }
         let measured = measuredVerdict(samples, end: end, window: window)
+        if gameExited { return measured == .noFrames ? .noFrames : .stopped }
         if measured != .works, let share = frontmostShare, share < 0.5, gameStarted != false, crashSigns.isEmpty {
             return .notVisible
         }
@@ -338,11 +347,11 @@ extension GamePort {
             profileID: profileID, recipeID: original.recipeID, renderer: runner.effectiveRenderer, sync: runner.effectiveSync,
             engineID: runner.engine.id, macOS: Shell.macOSVersionString, machine: Shell.machineDescription,
             startedAt: startedAt, seconds: seconds, verdict: LabResult.verdict(samples, end: end, frontmostShare: frontmostShare,
-                                                                         gameStarted: gameSeen, crashSigns: crashSigns),
+                                                                         gameStarted: gameSeen, crashSigns: crashSigns, gameExited: gameExited),
             steady: LabStats.from(samples, after: startedAt.timeIntervalSince1970 + steadyAfter),
             whole: LabStats.from(samples), hudLog: hudLog.lastPathComponent, frontmostShare: frontmostShare,
             gameStarted: gameSeen, crashSigns: crashSigns, vulkanDriver: runner.effectiveVulkanDriver,
-            peakThermalState: thermalSamples.max { $0.rawValue < $1.rawValue })
+            peakThermalState: LabThermalState.peak(thermalSamples))
         let encoder = JSONEncoder.pretty
         encoder.dateEncodingStrategy = .iso8601
         try encoder.encode(result).write(to: labDir.appendingPathComponent("\(stamp).json"))

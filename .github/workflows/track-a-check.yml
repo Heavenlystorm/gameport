@@ -51,3 +51,56 @@ jobs:
               assert "Kept" in cli("config", profile.name).stdout
               assert len(list(folder.glob("*.bak"))) == 1
               print("Catalog, filters, invalid arguments, and profile config retries passed.")
+              recipe = json.loads(Path("Data/recipes/hogwarts-legacy.json").read_text())
+              recipe["id"] = "registry-fixture"
+              key = r"HKCU\Software\Wine\AppDefaults\gameport-fixture.exe\Mac Driver"
+              recipe["configDefaults"] = {"registry": [
+                  dict(key=key, name="PlayerSetting", type="REG_SZ", data="recipe"),
+                  dict(key=key, name="MissingSetting", type="REG_DWORD", data="0xff")
+              ]}
+              db = root / "db/recipes"
+              db.mkdir(parents=True)
+              (db / "registry.json").write_text(json.dumps(recipe))
+              profile_json = json.loads((profile / "profile.json").read_text())
+              profile_json["recipeID"] = recipe["id"]
+              (profile / "profile.json").write_text(json.dumps(profile_json))
+              output = Path(os.environ["RUNNER_TEMP"]) / "gameport-registry.inf"
+              (engine / manifest["wineLoader"]).write_text(
+                  '#!/bin/sh\nset -eu\nif [ "$1" = rundll32.exe ]; then cp "$WINEPREFIX"/drive_c/gameport-*.inf "' + str(output) + '"; fi\n')
+              cli("config", profile.name)
+              assert output.exists()
+              assert not list((profile / "prefix/drive_c").glob("gameport-*.inf"))
+      - uses: actions/upload-artifact@v4
+        with:
+          name: registry-fixture
+          path: ${{ runner.temp }}/gameport-registry.inf
+  wine-registry:
+    needs: test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: registry-fixture
+      - name: Install Wine
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends wine64 xvfb xauth
+      - name: Apply the CLI-generated defaults twice in a disposable Wine prefix
+        env:
+          WINEPREFIX: ${{ runner.temp }}/wine
+          WINEDEBUG: "-all"
+          WINEDLLOVERRIDES: "mscoree,mshtml="
+        run: |
+          xvfb-run -a bash -euo pipefail <<'SH'
+          wine=/usr/lib/wine/wine64
+          key='HKCU\Software\Wine\AppDefaults\gameport-fixture.exe\Mac Driver'
+          "$wine" wineboot -u
+          cp gameport-registry.inf "$WINEPREFIX/drive_c/recipe.inf"
+          "$wine" reg add "$key" /v PlayerSetting /t REG_SZ /d player /f
+          for pass in 1 2; do
+            "$wine" rundll32.exe setupapi.dll,InstallHinfSection DefaultInstall 128 'C:\recipe.inf'
+            "$wine" reg query "$key" /v PlayerSetting | grep -Ei 'REG_SZ[[:space:]]+player'
+            "$wine" reg query "$key" /v MissingSetting | grep -Ei 'REG_DWORD[[:space:]]+0xff'
+          done
+          SH

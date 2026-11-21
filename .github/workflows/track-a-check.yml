@@ -1,0 +1,15 @@
+name: GamePort macOS verification
+on:
+  push:
+    branches: [verify-track-a-macos]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - run: swift --version
+      - run: swift test
+      - run: swift build -c release

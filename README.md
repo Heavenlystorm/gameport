@@ -67,7 +67,7 @@ Use `gameport vulkan <profile> moltenvk` to switch the game back.
 
 The bundled engine uses x86_64 Wine under Rosetta. An engine packager can supply a native ARM64 Wine + FEX
 build with its own signed binaries, required entitlements, guest modules and matching renderer libraries.
-Install its trusted manifest with `gameport engine install /path/to/manifest.json`. Each downloadable
+Choose **Install from manifest** in Setup or run `gameport engine install /path/to/manifest.json`. Each downloadable
 component needs an HTTPS URL and SHA-256 digest. Set `arch` to `arm64`, declare the required `minMacOS`,
 and point `fexModules.x64` and `fexModules.x86` at the packaged `xtajit64.dll` and `xtajit.dll`, relative to
 the engine root. Set `supportsKosmicKrisp` only for loaders supporting `CX_LIBVULKAN` / `CX_ACTIVE_GRAPHICS_BACKEND`

@@ -101,3 +101,17 @@ jobs:
               assert "Using fallback x86_64" in launch
               print(cli("stop","arm64"))
               print("Both Lab records and a fallback launch verified with isolated engine fixtures.")
+  combined:
+    runs-on: macos-15
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Test the two independent PRs together
+        run: |
+          git -c user.name=CI -c user.email=ci@example.invalid merge --no-commit --no-ff 7570127b28ede027c932d22eeb54671bc4003f73
+          python3 Scripts/embed-data.py
+          git diff --exit-code -- Sources/GamePortKit/Generated/BundledData.swift
+          swift test
+          swift build -c release

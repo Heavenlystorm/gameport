@@ -89,6 +89,7 @@ public struct LabResult: Codable, Sendable {
     public var renderer: Renderer
     public var sync: SyncMode
     public var engineID: String
+    public var engineArchitecture: EngineArchitecture? = nil
     public var macOS: String
     public var machine: String
     public var startedAt: Date
@@ -106,7 +107,6 @@ public struct LabResult: Codable, Sendable {
     public var crashSigns: [String]? = nil
     /// The Vulkan driver the game ran on (nil in older results = MoltenVK).
     public var vulkanDriver: VulkanDriver? = nil
-    public var engineArchitecture: EngineArchitecture? = nil
 
     /// "dxmt", or "dxmt + KosmicKrisp" when the game ran on KosmicKrisp.
     public var setup: String {
@@ -266,11 +266,12 @@ extension GamePort {
             let frames = LabResult.gameSamples(samples, gamePIDs: gamePIDs).map(\.frame).max() ?? 0
             progress?("\(elapsed) s: \(Int(frames)) frames")
         }
-        if seconds % 30 != 0 { try await Task.sleep(nanoseconds: UInt64(seconds % 30) * 1_000_000_000) }
+        if seconds % 30 != 0 {
+            try await Task.sleep(nanoseconds: UInt64(seconds % 30) * 1_000_000_000)
+            gamePIDs.formUnion(runningGamePIDs())
+        }
         let end = Date().timeIntervalSince1970
-        let finalPIDs = runningGamePIDs()
-        let gameExited = !gamePIDs.isEmpty && finalPIDs.isEmpty
-        gamePIDs.formUnion(finalPIDs)
+        let gameExited = !gamePIDs.isEmpty && runningGamePIDs().isEmpty
         try runner.killAll()
         guard try runner.waitForServer(timeout: 15) else { throw GamePortError.invalid("Wine is still running in \(profileID)") }
         stopped = true
@@ -288,13 +289,13 @@ extension GamePort {
             + (gameExited ? ["the game exited before the end"] : [])
         let result = LabResult(
             profileID: profileID, recipeID: original.recipeID, renderer: runner.effectiveRenderer, sync: runner.effectiveSync,
-            engineID: runner.engine.id, macOS: Shell.macOSVersionString, machine: Shell.machineDescription,
+            engineID: runner.engine.id, engineArchitecture: runner.engine.manifest.arch,
+            macOS: Shell.macOSVersionString, machine: Shell.machineDescription,
             startedAt: startedAt, seconds: seconds, verdict: LabResult.verdict(samples, end: end, frontmostShare: frontmostShare,
                                                                          gameStarted: gameSeen, crashSigns: crashSigns),
             steady: LabStats.from(samples, after: startedAt.timeIntervalSince1970 + steadyAfter),
             whole: LabStats.from(samples), hudLog: hudLog.lastPathComponent, frontmostShare: frontmostShare,
-            gameStarted: gameSeen, crashSigns: crashSigns, vulkanDriver: runner.effectiveVulkanDriver,
-            engineArchitecture: runner.engine.manifest.arch)
+            gameStarted: gameSeen, crashSigns: crashSigns, vulkanDriver: runner.effectiveVulkanDriver)
         let encoder = JSONEncoder.pretty
         encoder.dateEncodingStrategy = .iso8601
         try encoder.encode(result).write(to: labDir.appendingPathComponent("\(stamp).json"))

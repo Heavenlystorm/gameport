@@ -127,7 +127,9 @@ public struct GamePort: Sendable {
 
     public func openSteam(_ profileID: String, progress: ProgressHandler? = nil) throws -> Process {
         if let s = autoSnapshot(profileID) { progress?("Automatic snapshot: \(s.name)") }
-        return try steam(for: profileID).openClient()
+        let process = try steam(for: profileID).openClient()
+        recordLaunch(requested: profileID, actual: profileID)
+        return process
     }
 
     public func play(_ profileID: String, progress: ProgressHandler? = nil) throws -> Process {
@@ -140,9 +142,13 @@ public struct GamePort: Sendable {
         if let s = autoSnapshot(actual) { progress?("Automatic snapshot: \(s.name)") }
         progress?("Launching \(actual) on \(runner.engine.id) (\(runner.engine.manifest.arch.label)). Log: \(runner.logs.appendingPathComponent("game.log").path)")
         let process = try steam.play()
-        let marker = profiles.directory(profileID).appendingPathComponent("last-play-profile")
-        try? Data(actual.utf8).write(to: marker, options: .atomic)
+        recordLaunch(requested: profileID, actual: actual)
         return process
+    }
+
+    private func recordLaunch(requested: String, actual: String) {
+        let marker = profiles.directory(requested).appendingPathComponent("last-play-profile")
+        try? Data(actual.utf8).write(to: marker, options: .atomic)
     }
 
     public func stop(_ id: String) throws {

@@ -169,4 +169,34 @@ final class EngineArchitectureTests: XCTestCase {
         XCTAssertNoThrow(try kit.engines.engine(e.id).checkFiles())
         XCTAssertEqual(try String(contentsOf: driver, encoding: .utf8), "installed shim")
     }
+
+    func testCachedFEXManifestInstallsAndKeepsOptionalDriverOnReinstall() async throws {
+        var m = try XCTUnwrap(EngineStore.bundledManifests().first)
+        m.id = "local-native"
+        m.arch = .fex
+        m.fexModules = .init(x64: "fex/xtajit64.dll", x86: "fex/xtajit.dll")
+        m.components = []
+        let payload = Data("#!/bin/sh\nexit 0\n".utf8)
+        let sha = Checksum.sha256(data: payload)
+        try kit.paths.ensure(kit.paths.downloads)
+        try payload.write(to: Downloader(cache: kit.paths.downloads).cachedFile(sha256: sha, name: "fixture"))
+        for path in [m.wineLoader, m.wineServer, "fex/xtajit64.dll", "fex/xtajit.dll", "frameworks/libMoltenVK.dylib"] {
+            m.components.append(.init(name: URL(fileURLWithPath: path).lastPathComponent, kind: "runtime",
+                                      url: "https://example.invalid/fixture", sha256: sha, license: "fixture",
+                                      place: path, executable: path == m.wineLoader || path == m.wineServer))
+        }
+        let e = try await kit.engines.install(m)
+        XCTAssertNoThrow(try e.checkFiles())
+        let folder = e.root.appendingPathComponent("renderers/kosmickrisp")
+        try kit.paths.ensure(folder)
+        for file in ["libvulkan_kosmickrisp.dylib", "libMoltenVK.dylib"] {
+            try Data(file.utf8).write(to: folder.appendingPathComponent(file))
+        }
+        try fm.createSymbolicLink(atPath: folder.appendingPathComponent("libMoltenVK-engine.dylib").path,
+                                   withDestinationPath: "../../frameworks/libMoltenVK.dylib")
+        let replacement = try await kit.engines.install(m)
+        let shim = try XCTUnwrap(replacement.kosmicKrispShim)
+        XCTAssertEqual(try Data(contentsOf: shim), Data("libMoltenVK.dylib".utf8))
+        XCTAssertEqual(try kit.engines.engine(m.id).manifest, m)
+    }
 }

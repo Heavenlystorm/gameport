@@ -1,6 +1,7 @@
 #if os(macOS)
 import SwiftUI
 import AppKit
+import UniformTypeIdentifiers
 import GamePortKit
 
 @main
@@ -33,6 +34,7 @@ final class AppModel: ObservableObject {
     @Published var log: [String] = []
     @Published var gptkAccepted = false
     @Published var steamBase: SteamBase.Stamp?
+    private(set) var engineProfiles: [String: [Profile]] = [:]
 
     init() { refresh() }
 
@@ -43,6 +45,9 @@ final class AppModel: ObservableObject {
         profiles = gameport.profiles.all()
         gptkAccepted = gameport.licenses.isAccepted("apple-gptk")
         steamBase = (try? gameport.steamBase()).flatMap { $0.isReady ? $0.stamp : nil }
+        engineProfiles = profiles.reduce(into: [:]) { groups, profile in
+            if let id = profile.recipeID { groups[id, default: []].append(profile) }
+        }
     }
 
     func say(_ line: String) { log.append(line); if log.count > 400 { log.removeFirst(log.count - 400) } }
@@ -139,6 +144,15 @@ struct SetupView: View {
                                     model.job("Engine install") { k, p in try await k.installDefaultEngine(progress: p).id }
                                 }.disabled(model.busy != nil)
                                 if model.engines.contains(m.id) { Label("Installed", systemImage: "checkmark.seal.fill").foregroundStyle(.green) }
+                                Button("Install from manifest…") {
+                                    let panel = NSOpenPanel()
+                                    panel.allowedContentTypes = [.json]
+                                    panel.message = "Choose a trusted GamePort engine manifest."
+                                    guard panel.runModal() == .OK, let url = panel.url else { return }
+                                    model.job("Installing engine") { k, p in
+                                        try await k.engines.install(EngineManifest.load(url), progress: p).id
+                                    }
+                                }.disabled(model.busy != nil)
                             }
                         }
                     }.frame(maxWidth: .infinity, alignment: .leading).padding(4)
@@ -203,9 +217,10 @@ struct GameView: View {
     @EnvironmentObject var model: AppModel
     let recipe: Recipe
     @State private var selectedProfileID: String?
+    @State private var newEngineID: String?
 
     var body: some View {
-        let choices = model.profiles.filter { $0.recipeID == recipe.id }
+        let choices = model.engineProfiles[recipe.id] ?? []
         let profile = choices.first { $0.id == selectedProfileID } ?? choices.first
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
@@ -235,7 +250,8 @@ struct GameView: View {
                     Tag(text: "Sync: \(recipe.sync.rawValue)")
                     if let id = recipe.steamAppID { Tag(text: "Steam \(id)") }
                 }
-                let evidence = model.evidence(for: recipe)
+                let evidence = Evidence.of(recipe, results: profile.map { model.gameport.profiles.labResults($0.id) } ?? [],
+                                           antiCheat: AntiCheatDB.bundled.entry(for: recipe))
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     EvidenceIcon(level: evidence.level)
                     VStack(alignment: .leading, spacing: 2) {
@@ -249,9 +265,16 @@ struct GameView: View {
                 }
                 GroupBox("Steps") {
                     VStack(alignment: .leading, spacing: 10) {
+                        if profile == nil && model.engines.count > 1 {
+                            Picker("Engine", selection: $newEngineID) {
+                                Text("Default").tag(nil as String?)
+                                ForEach(model.engines, id: \.self) { Text($0).tag(Optional($0)) }
+                            }
+                        }
                         Step(n: 1, title: "Create the Windows environment", done: profile != nil) {
+                            let engine = newEngineID
                             model.job("\(recipe.title): creating the environment") { k, p in
-                                try k.createProfile(recipeID: recipe.id, progress: p).id
+                                try k.createProfile(recipeID: recipe.id, engineID: engine, progress: p).id
                             }
                         }.disabled(model.engines.isEmpty || model.busy != nil)
                         if let profile {
@@ -324,7 +347,7 @@ struct LabView: View {
                     }.disabled(model.busy != nil)
                     .help("Tries each renderer for 3 minutes (6-9 minutes in all) and picks the fastest one that works.")
                 }
-                let peers = model.profiles.filter { $0.recipeID == profile.recipeID && $0.engineID != profile.engineID }
+                let peers = (model.engineProfiles[profile.recipeID ?? ""] ?? []).filter { $0.engineID != profile.engineID }
                 if !peers.isEmpty || profile.fallbackProfileID != nil {
                     Picker("Fallback if engine is unavailable", selection: Binding(get: { profile.fallbackProfileID }, set: { other in
                         model.job("Changing fallback") { k, _ in try k.setFallback(profile.id, to: other); return nil }

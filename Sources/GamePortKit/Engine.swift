@@ -121,8 +121,11 @@ public struct InstalledEngine: Sendable {
 
     func checkFiles() throws {
         let fm = FileManager.default
-        for file in [wine, wineServer] where !fm.isExecutableFile(atPath: file.path) {
-            throw GamePortError.missing("engine executable \(file.path)")
+        for file in [wine, wineServer] {
+            var dir: ObjCBool = false
+            guard fm.fileExists(atPath: file.path, isDirectory: &dir), !dir.boolValue, fm.isExecutableFile(atPath: file.path) else {
+                throw GamePortError.missing("engine executable \(file.path)")
+            }
         }
         if let modules = manifest.fexModules {
             for path in [modules.x64, modules.x86] {
@@ -230,6 +233,7 @@ public struct EngineStore: Sendable {
                fresh.supportsKosmicKrisp, let shim = previous.kosmicKrispShim {
                 let dir = staging.appendingPathComponent("renderers/kosmickrisp")
                 try CopyOnWrite.clone(shim.deletingLastPathComponent(), to: dir)
+                guard fresh.kosmicKrispShim != nil else { throw GamePortError.missing("MoltenVK for the installed KosmicKrisp shim") }
             }
             try publish(staging, at: target)
             return InstalledEngine(manifest: manifest, root: target)

@@ -30,7 +30,11 @@ jobs:
               env = dict(os.environ, GAMEPORT_HOME=tmp)
               root = Path(tmp)
               def run(*args):
-                  return subprocess.run(args, env=env, text=True, check=True, capture_output=True).stdout
+                  p = subprocess.run(args, env=env, text=True, capture_output=True)
+                  if p.returncode:
+                      print(p.stdout, p.stderr, flush=True)
+                      p.check_returncode()
+                  return p.stdout
               def cli(*args):
                   return run(".build/release/gameport", *args)
               source = root / "framework.c"

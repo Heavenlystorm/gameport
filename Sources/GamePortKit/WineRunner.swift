@@ -92,6 +92,10 @@ public struct WineRunner: Sendable {
     }
 
     func prepareDirectories() throws {
+        if engine.manifest.arch == .fex {
+            try engine.checkHost()
+            try engine.checkFiles()
+        }
         try paths.ensure(home, home.appendingPathComponent("tmp"), home.appendingPathComponent("cache"), logs)
     }
 

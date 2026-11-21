@@ -387,28 +387,36 @@ extension GamePort {
 
     /// Compare two independently installed copies with the primary profile's renderer, sync and Vulkan driver.
     /// Preflight both before either run and keep each result in its own profile's history.
-    public func compareEngines(_ id: String, with otherID: String, seconds: Int = 180,
-                               progress: ProgressHandler? = nil) async throws -> [LabResult] {
+    func comparisonRunners(_ id: String, with otherID: String,
+                           checkHost: (InstalledEngine) throws -> Void = { try $0.checkHost() }) throws -> [WineRunner] {
         let first = try runner(for: id)
         let other = try enginePair(first.profile, otherID: otherID)
         let renderer = first.effectiveRenderer, sync = first.effectiveSync, driver = first.effectiveVulkanDriver
-        for var candidate in [first.profile, other] {
+        return try [first.profile, other].map { profile in
+            var candidate = profile
             candidate.renderer = renderer
             candidate.sync = sync
             candidate.vulkanDriver = driver
             let runner = try self.runner(for: candidate)
-            try runner.engine.checkHost()
+            try checkHost(runner.engine)
             try runner.engine.checkFiles()
             _ = try runner.environment()
             let steam = SteamClient(runner: runner)
             guard let appID = runner.recipe?.steamAppID, steam.isInstalled, steam.isGameInstalled(appID: appID) else {
                 throw GamePortError.missing("install the Steam game in profile \(candidate.id) before comparing engines")
             }
+            return runner
         }
+    }
+
+    public func compareEngines(_ id: String, with otherID: String, seconds: Int = 180,
+                               progress: ProgressHandler? = nil) async throws -> [LabResult] {
+        let runners = try comparisonRunners(id, with: otherID)
         var results: [LabResult] = []
-        for profile in [first.profile, other] {
-            progress?("Testing \(profile.id) on \(profile.engineID)")
-            let run = try await lab(profile.id, renderer: renderer, seconds: seconds, sync: sync, vulkanDriver: driver, progress: progress)
+        for runner in runners {
+            progress?("Testing \(runner.profile.id) on \(runner.engine.id)")
+            let run = try await lab(runner.profile.id, renderer: runner.effectiveRenderer, seconds: seconds,
+                                    sync: runner.effectiveSync, vulkanDriver: runner.effectiveVulkanDriver, progress: progress)
             progress?("\(run.engineID): \(run.summary)")
             results.append(run)
         }

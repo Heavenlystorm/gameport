@@ -173,11 +173,12 @@ public struct GamePort: Sendable {
     }
 
     /// Fall back only during engine preflight. Once Steam has been launched it must never be launched twice.
-    func playbackRunner(_ id: String, progress: ProgressHandler? = nil) throws -> WineRunner {
+    func playbackRunner(_ id: String, progress: ProgressHandler? = nil,
+                        checkHost: (InstalledEngine) throws -> Void = { try $0.checkHost() }) throws -> WineRunner {
         let profile = try profiles.load(id)
         func available(_ candidate: Profile) throws -> WineRunner {
             let runner = try self.runner(for: candidate)
-            try runner.engine.checkHost()
+            try checkHost(runner.engine)
             try runner.engine.checkFiles()
             _ = try runner.environment()
             return runner

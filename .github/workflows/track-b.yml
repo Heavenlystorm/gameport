@@ -12,3 +12,47 @@ jobs:
       - uses: actions/checkout@v4
       - run: GAMEPORT_BUILD="$RUNNER_TEMP/gameport-build" bash Scripts/build-vkd3d-proton.sh
       - run: file "$RUNNER_TEMP"/gameport-build/*/overlay/x86_64-windows/*.dll
+  gameport:
+    runs-on: macos-26
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - run: swift test
+      - run: swift build -c release
+      - run: Scripts/make-app.sh
+      - name: Install both real drivers into disposable engine fixtures
+        shell: python3 {0}
+        run: |
+          import json, os, pathlib, subprocess, tempfile
+          from pathlib import Path
+          src = json.loads(next(Path("Data/engines").glob("*.json")).read_text())
+          with tempfile.TemporaryDirectory() as tmp:
+              env = dict(os.environ, GAMEPORT_HOME=tmp)
+              root = Path(tmp)
+              def run(*args):
+                  return subprocess.run(args, env=env, text=True, check=True, capture_output=True).stdout
+              def cli(*args):
+                  return run(".build/release/gameport", *args)
+              source = root / "framework.c"
+              source.write_text("int fixture(void) { return 0; }")
+              for arch in ["x86_64", "arm64"]:
+                  manifest = dict(src, arch=arch, id="test-" + arch)
+                  if arch == "arm64":
+                      manifest["fexModules"] = dict(x64="modules/xtajit64.dll", x86="modules/xtajit.dll")
+                  engine = root / "engines" / manifest["id"]
+                  fw = engine / "frameworks/libMoltenVK.dylib"
+                  fw.parent.mkdir(parents=True)
+                  run("clang","-arch",arch,"-dynamiclib",str(source),"-o",str(fw))
+                  (engine / "gameport-engine.json").write_text(json.dumps(manifest))
+                  print(cli("engine","kosmickrisp",engine.name))
+                  print(cli("engine","kosmickrisp",engine.name))
+                  overlay = engine / "renderers/kosmickrisp"
+                  shim = str(overlay/"libMoltenVK.dylib")
+                  run("lipo","-verify_arch",arch,shim)
+                  run("lipo","-verify_arch",arch,str(overlay/"libvulkan_kosmickrisp.dylib"))
+                  run("codesign","--verify",shim)
+                  assert "_vkGetInstanceProcAddr" in run("nm","-gU",shim)
+                  assert (overlay/"libMoltenVK-engine.dylib").resolve() == fw
+              assert "arm64" in cli("engine","list")
+              assert "x86_64" in cli("engine","list")
+              print("Verified native and Rosetta driver installation, signatures, forwarding links and retries.")

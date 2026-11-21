@@ -101,7 +101,7 @@ struct ContentView: View {
                     if selection == "setup" || selection == nil {
                         SetupView()
                     } else if let id = selection, let r = model.recipes.first(where: { $0.id == id }) {
-                        GameView(recipe: r)
+                        GameView(recipe: r).id(r.id)
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -202,14 +202,36 @@ struct LicenseSheet: View {
 struct GameView: View {
     @EnvironmentObject var model: AppModel
     let recipe: Recipe
+    @State private var selectedProfileID: String?
 
     var body: some View {
-        let profile = model.profile(for: recipe)
+        let choices = model.profiles.filter { $0.recipeID == recipe.id }
+        let profile = choices.first { $0.id == selectedProfileID } ?? choices.first
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 Text(recipe.title).font(.largeTitle.bold())
+                if let profile {
+                    if choices.count > 1 {
+                        Picker("Play profile", selection: Binding(get: { profile.id }, set: { selectedProfileID = $0 })) {
+                            ForEach(choices) { p in Text("\(p.id) · \(p.engineID)").tag(p.id) }
+                        }
+                    }
+                    let unused = model.engines.filter { id in !choices.contains { $0.engineID == id } }
+                    if !unused.isEmpty {
+                        Menu("Create profile on another engine") {
+                            ForEach(unused, id: \.self) { engine in
+                                Button(engine) {
+                                    let id = String(recipe.id.prefix(60)) + "-" + UUID().uuidString.prefix(8).lowercased()
+                                    model.job("Creating \(id)") { k, p in
+                                        try k.createProfile(recipeID: recipe.id, profileID: id, engineID: engine, progress: p).id
+                                    }
+                                }
+                            }
+                        }.disabled(model.busy != nil)
+                    }
+                }
                 HStack(spacing: 12) {
-                    Tag(text: recipe.renderer.displayName)
+                    Tag(text: (profile?.renderer ?? recipe.renderer).displayName)
                     Tag(text: "Sync: \(recipe.sync.rawValue)")
                     if let id = recipe.steamAppID { Tag(text: "Steam \(id)") }
                 }
@@ -221,7 +243,7 @@ struct GameView: View {
                         if let detail = evidence.detail { Text(detail).font(.caption).foregroundStyle(.secondary) }
                     }
                 }
-                if recipe.renderer == .d3dmetal && !model.gptkAccepted {
+                if (profile?.renderer ?? recipe.renderer) == .d3dmetal && !model.gptkAccepted {
                     Label("This game uses D3DMetal. It cannot be played until you accept Apple's licence on the Setup page.", systemImage: "exclamationmark.triangle.fill")
                         .foregroundStyle(.orange)
                 }
@@ -243,10 +265,10 @@ struct GameView: View {
                             if recipe.steamAppID != nil {
                                 Step(n: 4, title: "Play", done: false) {
                                     model.job("Starting \(recipe.title)") { k, p in _ = try k.play(profile.id, progress: p); return "Game started" }
-                                }.disabled(!installed || model.busy != nil)
+                                }.disabled((!installed && profile.fallbackProfileID == nil) || model.busy != nil)
                             }
                             HStack {
-                                Button("Stop everything") { model.job("Stopping") { k, _ in try k.runner(for: profile.id).killAll(); return "Stopped" } }
+                                Button("Stop everything") { model.job("Stopping") { k, _ in try k.stop(profile.id); return "Stopped" } }
                                 Button("Show logs") { NSWorkspace.shared.open(model.gameport.profiles.logs(profile.id)) }
                             }.padding(.top, 4)
                         }
@@ -302,8 +324,29 @@ struct LabView: View {
                     }.disabled(model.busy != nil)
                     .help("Tries each renderer for 3 minutes (6-9 minutes in all) and picks the fastest one that works.")
                 }
-                // Only offered once KosmicKrisp is installed in this profile's engine (Tools/kosmickrisp-shim/install.sh).
-                if model.gameport.engines.installed().first(where: { $0.id == profile.engineID })?.kosmicKrispShim != nil {
+                let peers = model.profiles.filter { $0.recipeID == profile.recipeID && $0.engineID != profile.engineID }
+                if !peers.isEmpty || profile.fallbackProfileID != nil {
+                    Picker("Fallback if engine is unavailable", selection: Binding(get: { profile.fallbackProfileID }, set: { other in
+                        model.job("Changing fallback") { k, _ in try k.setFallback(profile.id, to: other); return nil }
+                    })) {
+                        Text("Off").tag(nil as String?)
+                        ForEach(peers) { other in Text("\(other.id) · \(other.engineID)").tag(Optional(other.id)) }
+                    }.disabled(model.busy != nil)
+                    if !peers.isEmpty {
+                        Menu("Compare engines") {
+                            ForEach(peers) { other in
+                                Button("\(other.id) · \(other.engineID)") {
+                                    model.job("Engine comparison") { k, p in
+                                        _ = try await k.compareEngines(profile.id, with: other.id, progress: p)
+                                        return "Both measurements saved"
+                                    }
+                                }
+                            }
+                        }.disabled(model.busy != nil)
+                    }
+                }
+                let engine = try? model.gameport.engines.engine(profile.engineID)
+                if engine?.kosmicKrispShim != nil {
                     Picker("Vulkan driver", selection: Binding(
                         get: { profile.vulkanDriver ?? .moltenvk },
                         set: { driver in
@@ -316,12 +359,21 @@ struct LabView: View {
                     }
                     .fixedSize()
                     .help("Used by DXVK (Direct3D 9/10/11) and vkd3d (Direct3D 12). KosmicKrisp is Mesa's open Vulkan driver on Metal; only the game uses it.")
+                } else if engine?.supportsKosmicKrisp == true {
+                    Button("Install KosmicKrisp for this engine") {
+                        model.job("Installing KosmicKrisp") { k, p in
+                            try await k.engines.installKosmicKrisp(profile.engineID, progress: p)
+                            return nil
+                        }
+                    }
+                    .disabled(model.busy != nil || Shell.macOSVersion.majorVersion < 26)
+                    .help("Requires macOS 26 and Apple's Command Line Tools.")
                 }
                 ForEach(results.prefix(5), id: \.startedAt) { r in
                     VStack(alignment: .leading, spacing: 2) {
                         Label(r.summary, systemImage: r.verdict == .works ? "checkmark.circle.fill" : r.verdict == .notVisible ? "eye.slash" : "exclamationmark.triangle.fill")
                             .foregroundStyle(r.verdict == .works ? Color.green : r.verdict == .notVisible ? Color.secondary : Color.orange)
-                        Text("\(r.startedAt.formatted(date: .abbreviated, time: .shortened)) · \(r.machine) · macOS \(r.macOS) · \(r.engineID)")
+                        Text("\(r.startedAt.formatted(date: .abbreviated, time: .shortened)) · \(r.machine) · macOS \(r.macOS) · \(r.engineID)\(r.engineArchitecture.map { " · " + $0.label } ?? "")")
                             .font(.caption).foregroundStyle(.secondary)
                     }
                 }

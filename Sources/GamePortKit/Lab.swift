@@ -35,9 +35,12 @@ public enum MetalHUDLog {
 
     /// The process that presented the most frames.
     public static func busiestProcess(_ samples: [Sample]) -> Int? {
-        Dictionary(grouping: samples, by: \.pid)
-            .mapValues { s in (s.map(\.frame).max() ?? 0) - (s.filter { $0.frame > 0 }.map(\.frame).min() ?? 0) }
-            .max { $0.value < $1.value }?.key
+        let groups = Dictionary(grouping: samples, by: \.pid)
+        let spans = groups.mapValues { group -> Double in
+            let counters = group.map(\.frame).filter { $0 > 0 }
+            return (counters.max() ?? 0) - (counters.min() ?? 0)
+        }
+        return spans.max { a, b in a.value == b.value ? a.key > b.key : a.value < b.value }?.key
     }
 }
 
@@ -103,6 +106,7 @@ public struct LabResult: Codable, Sendable {
     public var crashSigns: [String]? = nil
     /// The Vulkan driver the game ran on (nil in older results = MoltenVK).
     public var vulkanDriver: VulkanDriver? = nil
+    public var engineArchitecture: EngineArchitecture? = nil
 
     /// "dxmt", or "dxmt + KosmicKrisp" when the game ran on KosmicKrisp.
     public var setup: String {
@@ -207,16 +211,19 @@ extension GamePort {
     /// Launches the profile's game with `renderer` (nil = its own choice) for `seconds`, measures it and
     /// stops everything. The profile is put back exactly as it was. Results land in profiles/<id>/lab/.
     public func lab(_ profileID: String, renderer: Renderer? = nil, seconds: Int = 180,
+                    sync: SyncMode? = nil, vulkanDriver: VulkanDriver? = nil,
                     steadyAfter: TimeInterval = 60, progress: ProgressHandler? = nil) async throws -> LabResult {
+        guard seconds > 0 else { throw GamePortError.invalid("Lab duration must be positive") }
         let original = try profiles.load(profileID)
         var trial = original
         if let renderer { trial.renderer = renderer }
+        if let sync { trial.sync = sync }
+        if let vulkanDriver { trial.vulkanDriver = vulkanDriver }
         trial.metalHUD = true
         trial.environment["MTL_HUD_LOG_ENABLED"] = "1"
-        try profiles.save(trial)
-        defer { try? profiles.save(original) }
-
-        let runner = try self.runner(for: profileID)
+        let runner = try self.runner(for: trial)
+        try runner.engine.checkHost()
+        try runner.engine.checkFiles()
         let steam = SteamClient(runner: runner)
         guard runner.recipe?.steamAppID != nil else { throw GamePortError.unsupported("\(profileID): the lab only runs Steam games") }
         let labDir = profiles.directory(profileID).appendingPathComponent("lab", isDirectory: true)
@@ -242,6 +249,8 @@ extension GamePort {
         func size(_ file: URL) -> UInt64 { (try? FileManager.default.attributesOfItem(atPath: file.path)[.size] as? UInt64) ?? 0 }
         let cefStart = size(cefLog), bootstrapStart = size(bootstrapLog)
         _ = try steam.play()
+        var stopped = false
+        defer { if !stopped { try? runner.killAll() } }
         var front: [Bool] = []
         var gamePIDs = Set<Int>()
         func runningGamePIDs() -> Set<Int> {
@@ -259,14 +268,18 @@ extension GamePort {
         }
         if seconds % 30 != 0 { try await Task.sleep(nanoseconds: UInt64(seconds % 30) * 1_000_000_000) }
         let end = Date().timeIntervalSince1970
-        let gameExited = !gamePIDs.isEmpty && runningGamePIDs().isEmpty
+        let finalPIDs = runningGamePIDs()
+        let gameExited = !gamePIDs.isEmpty && finalPIDs.isEmpty
+        gamePIDs.formUnion(finalPIDs)
         try runner.killAll()
+        guard try runner.waitForServer(timeout: 15) else { throw GamePortError.invalid("Wine is still running in \(profileID)") }
+        stopped = true
         stream.terminate()
         stream.waitUntilExit()
 
         let all = MetalHUDLog.parse((try? String(contentsOf: hudLog, encoding: .utf8)) ?? "")
-        let samples = LabResult.gameSamples(all, gamePIDs: gamePIDs)
         let gameSeen = !gamePIDs.isEmpty
+        let samples = gameSeen ? LabResult.gameSamples(all, gamePIDs: gamePIDs) : []
         let frontmostShare = front.isEmpty ? nil : Double(front.filter { $0 }.count) / Double(front.count)
         // Shell.spawn starts game.log afresh for every launch, so the whole file is this run's.
         let logText = (try? String(contentsOf: gameLog, encoding: .utf8)) ?? ""
@@ -280,7 +293,8 @@ extension GamePort {
                                                                          gameStarted: gameSeen, crashSigns: crashSigns),
             steady: LabStats.from(samples, after: startedAt.timeIntervalSince1970 + steadyAfter),
             whole: LabStats.from(samples), hudLog: hudLog.lastPathComponent, frontmostShare: frontmostShare,
-            gameStarted: gameSeen, crashSigns: crashSigns, vulkanDriver: runner.effectiveVulkanDriver)
+            gameStarted: gameSeen, crashSigns: crashSigns, vulkanDriver: runner.effectiveVulkanDriver,
+            engineArchitecture: runner.engine.manifest.arch)
         let encoder = JSONEncoder.pretty
         encoder.dateEncodingStrategy = .iso8601
         try encoder.encode(result).write(to: labDir.appendingPathComponent("\(stamp).json"))
@@ -369,6 +383,36 @@ extension GamePort {
             list.append(r)
         }
         return list.filter { $0 != .wined3d }
+    }
+
+    /// Compare two independently installed copies with the primary profile's renderer, sync and Vulkan driver.
+    /// Preflight both before either run and keep each result in its own profile's history.
+    public func compareEngines(_ id: String, with otherID: String, seconds: Int = 180,
+                               progress: ProgressHandler? = nil) async throws -> [LabResult] {
+        let first = try runner(for: id)
+        let other = try enginePair(first.profile, otherID: otherID)
+        let renderer = first.effectiveRenderer, sync = first.effectiveSync, driver = first.effectiveVulkanDriver
+        for var candidate in [first.profile, other] {
+            candidate.renderer = renderer
+            candidate.sync = sync
+            candidate.vulkanDriver = driver
+            let runner = try self.runner(for: candidate)
+            try runner.engine.checkHost()
+            try runner.engine.checkFiles()
+            _ = try runner.environment()
+            let steam = SteamClient(runner: runner)
+            guard let appID = runner.recipe?.steamAppID, steam.isInstalled, steam.isGameInstalled(appID: appID) else {
+                throw GamePortError.missing("install the Steam game in profile \(candidate.id) before comparing engines")
+            }
+        }
+        var results: [LabResult] = []
+        for profile in [first.profile, other] {
+            progress?("Testing \(profile.id) on \(profile.engineID)")
+            let run = try await lab(profile.id, renderer: renderer, seconds: seconds, sync: sync, vulkanDriver: driver, progress: progress)
+            progress?("\(run.engineID): \(run.summary)")
+            results.append(run)
+        }
+        return results
     }
 
     /// Runs the lab once per candidate renderer and switches the profile to the fastest one that works.

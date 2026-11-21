@@ -8,6 +8,8 @@ public struct Profile: Codable, Sendable, Equatable, Identifiable {
     public var title: String
     public var recipeID: String?
     public var engineID: String
+    /// A separately prepared profile for this game on another engine. Used only before launching.
+    public var fallbackProfileID: String?
     /// Player overrides on top of the recipe (nil = take the recipe's value).
     public var renderer: Renderer?
     public var sync: SyncMode?
@@ -55,10 +57,7 @@ public struct ProfileStore: Sendable {
         try paths.ensure(directory(profile.id), logs(profile.id), home(profile.id))
         let encoder = JSONEncoder.pretty
         encoder.dateEncodingStrategy = .iso8601
-        let tmp = directory(profile.id).appendingPathComponent("profile.json.tmp")
-        try encoder.encode(profile).write(to: tmp)
-        _ = try? FileManager.default.removeItem(at: file(profile.id))
-        try FileManager.default.moveItem(at: tmp, to: file(profile.id))
+        try encoder.encode(profile).write(to: file(profile.id), options: .atomic)
     }
 
     public func delete(_ id: String) throws {

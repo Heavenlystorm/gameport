@@ -13,3 +13,41 @@ jobs:
       - run: swift --version
       - run: swift test
       - run: swift build -c release
+      - name: Exercise recipes and config through the release CLI
+        shell: python3 {0}
+        run: |
+          import json, os, pathlib, subprocess, tempfile
+          from pathlib import Path
+          with tempfile.TemporaryDirectory() as tmp:
+              root = Path(tmp)
+              env = dict(os.environ, GAMEPORT_HOME=tmp)
+              def cli(*args, check=True):
+                  return subprocess.run([".build/release/gameport", *args], env=env, capture_output=True, text=True, check=check)
+              assert len(cli("recipes").stdout.splitlines()) == 21
+              assert "Team Fortress 2" in cli("recipes", "440", "--status", "verified", "--renderer", "dxmt").stdout
+              assert "No matching" in cli("recipes", "440", "--renderer", "dxvk").stdout
+              assert cli("recipes", "--status", check=False).returncode == 1
+              assert cli("recipes", "--other", check=False).returncode == 1
+              manifest = json.loads(next(Path("Data/engines").glob("*.json")).read_text())
+              engine = root / "engines" / manifest["id"]
+              engine.mkdir(parents=True)
+              receipt = next(line.split('"')[1] for line in Path("Sources/GamePortKit/Engine.swift").read_text().splitlines() if "static let receiptName" in line)
+              (engine / receipt).write_text(json.dumps(manifest))
+              for path in [manifest["wineLoader"], manifest["wineServer"]]:
+                  bin = engine / path
+                  bin.parent.mkdir(parents=True, exist_ok=True)
+                  bin.write_text("#!/bin/sh\nexit 0\n")
+                  bin.chmod(0o755)
+              profile = root / "profiles" / "hogwarts-legacy"
+              profile.mkdir(parents=True)
+              (profile / "profile.json").write_text(json.dumps(dict(schema=1,id=profile.name,recipeID=profile.name,title="Hogwarts Legacy",engineID=manifest["id"],renderer="wined3d",environment={},metalHUD=False,createdAt="2026-11-01T00:00:00Z")))
+              folder = profile / "prefix/drive_c/users" / env["USER"] / "AppData/Local/Hogwarts Legacy/Saved/Config/WindowsNoEditor"
+              folder.mkdir(parents=True)
+              ini = folder / "Engine.ini"
+              ini.write_bytes(b"; custom\r\n[SystemSettings]\r\nGamma=2\r\n")
+              first = cli("config", profile.name)
+              assert "Added" in first.stdout, first
+              assert ini.read_bytes() == b"; custom\r\n[SystemSettings]\r\nr.WarnOfBadDrivers=0\r\nGamma=2\r\n"
+              assert "Kept" in cli("config", profile.name).stdout
+              assert len(list(folder.glob("*.bak"))) == 1
+              print("Catalog, filters, invalid arguments, and profile config retries passed.")

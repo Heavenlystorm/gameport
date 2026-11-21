@@ -1,0 +1,89 @@
+name: Catalog, launcher and Lab verification
+
+on:
+  push:
+    branches: [verify-catalog-launcher-lab]
+
+permissions:
+  contents: read
+
+jobs:
+  revisions:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.refs.outputs.matrix }}
+    steps:
+      - name: Resolve independent branches and the combined push to exact commits
+        id: refs
+        shell: python3 {0}
+        run: |
+          import json
+          import os
+          import subprocess
+
+          branches = ["cc0-game-catalog", "guided-game-launcher", "lab-frame-detection"]
+          refs = [f"refs/heads/{branch}" for branch in branches]
+          repo = f"{os.environ['GITHUB_SERVER_URL']}/{os.environ['GITHUB_REPOSITORY']}.git"
+          result = subprocess.run(["git", "ls-remote", "--heads", repo, *refs],
+                                  check=True, capture_output=True, text=True)
+          heads = dict(line.split()[::-1] for line in result.stdout.splitlines())
+          include = [{"label": "combined", "revision": os.environ["GITHUB_SHA"]}]
+          for branch, ref in zip(branches, refs):
+              if ref in heads:
+                  include.append({"label": branch, "revision": heads[ref]})
+              else:
+                  print(f"Branch not present on the fork: {branch}")
+          for entry in include:
+              print(f"{entry['label']}: {entry['revision']}")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              print("matrix=" + json.dumps({"include": include}), file=output)
+
+  verify:
+    name: macOS / ${{ matrix.label }}
+    needs: revisions
+    runs-on: macos-15
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.revisions.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.revision }}
+          persist-credentials: false
+      - name: Check the runtime and tested revision
+        run: |
+          swift --version
+          sw_vers
+          git rev-parse HEAD
+      - name: Check the embedded catalog matches its sources
+        run: |
+          python3 Scripts/embed-data.py
+          git diff --exit-code -- Sources/GamePortKit/Generated/BundledData.swift
+      - name: Test the catalog importer
+        if: ${{ hashFiles('Tests/ScriptTests/test_import_recipes.py') != '' }}
+        run: python3 -m unittest discover -v -s Tests/ScriptTests
+      - name: Run the full Swift suite
+        run: swift test
+      - name: Build release products and verify the packaged app
+        run: |
+          swift build -c release
+          bash Scripts/make-app.sh
+          codesign --verify --deep --strict build/GamePort.app
+      - name: Check catalog enumeration and combined filters through the release CLI
+        shell: python3 {0}
+        run: |
+          import os
+          import subprocess
+          import tempfile
+          from pathlib import Path
+
+          with tempfile.TemporaryDirectory() as home:
+              env = dict(os.environ, GAMEPORT_HOME=home)
+              cli = ["build/GamePort.app/Contents/MacOS/gameport", "recipes"]
+              def recipes(*args):
+                  return subprocess.check_output([*cli, *args], env=env, text=True)
+              total = len(list(Path("Data/recipes").glob("*.json")))
+              assert len(recipes().splitlines()) == total, total
+              assert "Team Fortress 2" in recipes("440", "--status", "verified", "--renderer", "dxmt")
+              print(f"The release CLI lists all {total} bundled recipes.")

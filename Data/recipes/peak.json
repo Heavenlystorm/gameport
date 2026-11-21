@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "id": "peak",
+  "title": "PEAK",
+  "steamAppID": 3527290,
+  "launch": "steam",
+  "renderer": "dxvk",
+  "sync": "msync",
+  "advertiseAVX": false,
+  "environment": {},
+  "launchArguments": [],
+  "registry": [],
+  "status": "community",
+  "notes": [
+    "Verified in highball-db: ~30 FPS with DXVK on M1 Pro."
+  ],
+  "knownIssues": [
+    {
+      "symptom": "The engine's own DXVK (Kegworks v1.10.4) crashes at launch in D3D11 games that use pipeline-statistics queries (GamePort lab, M1, Heaven: 10 s).",
+      "cause": "MoltenVK does not support VK_QUERY_TYPE_PIPELINE_STATISTICS; DXVK then resets the query pool it could not create and winevulkan aborts. Whether this game uses the query is not verified.",
+      "fix": "GamePort's DXVK patch (Patches/dxvk, Scripts/build-dxvk.sh) makes these queries return zero and fixes the crash; Heaven D3D11 ran 5 minutes without crashing in the lab. The patched DXVK is not shipped with the engine yet. Verified with DXVK in highball-db (M1 Pro ~30 FPS); if it crashes at launch, set the renderer to dxmt."
+    }
+  ],
+  "source": "highball-db (CC0)"
+}

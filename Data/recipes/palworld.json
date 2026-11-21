@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "id": "palworld",
+  "title": "Palworld",
+  "steamAppID": 1623730,
+  "launch": "steam",
+  "renderer": "d3dmetal",
+  "sync": "msync",
+  "advertiseAVX": false,
+  "environment": {},
+  "launchArguments": [],
+  "registry": [],
+  "status": "community",
+  "notes": [
+    "~30 FPS at 1080p medium on M4 (highball-db)."
+  ],
+  "knownIssues": [],
+  "source": "highball-db (CC0)"
+}

@@ -1,0 +1,20 @@
+{
+  "schema": 1,
+  "id": "elden-ring",
+  "title": "Elden Ring",
+  "steamAppID": 1245620,
+  "launch": "steam",
+  "renderer": "d3dmetal",
+  "sync": "msync",
+  "advertiseAVX": false,
+  "environment": {},
+  "launchArguments": [],
+  "registry": [],
+  "status": "community",
+  "notes": [
+    "D3D12 game: D3DMetal. highball-db: played for 231 minutes without problems on M1.",
+    "Easy Anti-Cheat runs in user mode under Wine; if it does not, the game can be played offline."
+  ],
+  "knownIssues": [],
+  "source": "highball-db (CC0) + GameToMac 0.1.74 notes (facts, independently rewritten)"
+}

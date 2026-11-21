@@ -1,0 +1,20 @@
+{
+  "schema": 1,
+  "id": "red-dead-redemption-2",
+  "title": "Red Dead Redemption 2 (Story Mode)",
+  "steamAppID": 1174180,
+  "launch": "steam",
+  "renderer": "dxmt",
+  "sync": "msync",
+  "advertiseAVX": false,
+  "environment": {},
+  "launchArguments": [],
+  "registry": [],
+  "status": "community",
+  "notes": [
+    "The game uses its own Vulkan renderer (MoltenVK); the renderer setting does not affect the game itself, DXMT is for the Rockstar launcher.",
+    "Rockstar error #1.000.7 in the Turkey time zone is fixed by the engine's 0026 patch."
+  ],
+  "knownIssues": [],
+  "source": "highball-db (CC0) + GameToMac 0.1.74 notes (facts, independently rewritten)"
+}

@@ -1,0 +1,21 @@
+{
+  "schema": 1,
+  "id": "3dmark-demo",
+  "title": "3DMark Demo",
+  "steamAppID": 231350,
+  "launch": "steam",
+  "renderer": "dxmt",
+  "sync": "msync",
+  "advertiseAVX": false,
+  "environment": {},
+  "launchArguments": [],
+  "registry": [],
+  "status": "untested",
+  "notes": [
+    "Free benchmark used to test the open DirectX 12 path: Time Spy is a D3D12 test.",
+    "With the dxmt renderer GamePort does not override d3d12, so Time Spy runs on Wine's built-in vkd3d over MoltenVK (no D3DMetal). Use the d3dmetal renderer to compare.",
+    "See research_notes/open-dx12-path.md."
+  ],
+  "knownIssues": [],
+  "source": "GamePort"
+}

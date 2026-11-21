@@ -1,0 +1,26 @@
+{
+  "schema": 1,
+  "id": "age-of-empires-2-de",
+  "title": "Age of Empires II: Definitive Edition",
+  "steamAppID": 813780,
+  "launch": "steam",
+  "renderer": "d3dmetal",
+  "sync": "msync",
+  "advertiseAVX": true,
+  "environment": {},
+  "launchArguments": [],
+  "registry": [],
+  "status": "untested",
+  "notes": [
+    "This game has a native macOS version on Steam; try that first.",
+    "For the Windows version GameToMac uses D3DMetal + MSync + AVX."
+  ],
+  "knownIssues": [
+    {
+      "symptom": "FPS drops sharply when selecting units with UHD on",
+      "cause": "The game's DLC check runs thousands of times a second",
+      "fix": "Turn UHD off in the graphics settings"
+    }
+  ],
+  "source": "GameToMac 0.1.74 notes (facts, independently rewritten) + highball-db (CC0)"
+}

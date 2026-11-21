@@ -1,0 +1,26 @@
+{
+  "schema": 1,
+  "id": "path-of-exile-2",
+  "title": "Path of Exile 2",
+  "steamAppID": 2694490,
+  "launch": "steam",
+  "renderer": "d3dmetal",
+  "sync": "none",
+  "advertiseAVX": true,
+  "environment": {},
+  "launchArguments": [],
+  "registry": [],
+  "minMacOS": "26.5",
+  "status": "untested",
+  "notes": [
+    "D3D12: D3DMetal. Tested with MSync and ESync off (GameToMac)."
+  ],
+  "knownIssues": [
+    {
+      "symptom": "Freezes after connecting to the login server",
+      "cause": "Wine misreads NtQueryDirectoryObject's BOOLEAN argument, so the drive scan loops forever",
+      "fix": "A GamePort engine patch (planned: 0101). Until then it may not work."
+    }
+  ],
+  "source": "GameToMac 0.1.74 notes (facts, independently rewritten) + highball-db (CC0)"
+}

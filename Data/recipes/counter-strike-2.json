@@ -1,0 +1,26 @@
+{
+  "schema": 1,
+  "id": "counter-strike-2",
+  "title": "Counter-Strike 2",
+  "steamAppID": 730,
+  "launch": "steam",
+  "renderer": "dxmt",
+  "sync": "msync",
+  "advertiseAVX": false,
+  "environment": {},
+  "launchArguments": [],
+  "registry": [],
+  "status": "community",
+  "notes": [
+    "DXMT on macOS 15+. highball-db: 102-108 FPS at 1728x1117 in a Dust II bot match (M series).",
+    "VAC runs in user mode; online matches are possible."
+  ],
+  "knownIssues": [
+    {
+      "symptom": "Steam's crash reporter crashes when quitting the game",
+      "cause": "Wine sechost/dbghelp errors (patched by GameToMac)",
+      "fix": "Harmless until GamePort's engine patches land"
+    }
+  ],
+  "source": "highball-db (CC0) + GameToMac 0.1.74 notes (facts, independently rewritten)"
+}

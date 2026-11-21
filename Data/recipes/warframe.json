@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "id": "warframe",
+  "title": "Warframe",
+  "steamAppID": 230410,
+  "launch": "steam",
+  "renderer": "dxmt",
+  "sync": "msync",
+  "advertiseAVX": false,
+  "environment": {},
+  "launchArguments": [],
+  "registry": [],
+  "status": "community",
+  "notes": [
+    "Verified in highball-db: the launcher updates, Steam sign-in works, Orbiter at 80+ FPS."
+  ],
+  "knownIssues": [],
+  "source": "highball-db (CC0)"
+}

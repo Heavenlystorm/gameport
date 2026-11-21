@@ -1,0 +1,82 @@
+{
+  "schema": 1,
+  "id": "x64-crossover26.3-hb20261014",
+  "displayName": "Wine 11.0 (CrossOver 26.3 source) — Intel, Rosetta 2",
+  "arch": "x86_64",
+  "minMacOS": "14.0",
+  "wineLoader": "engine/bin/wine",
+  "wineServer": "engine/bin/wineserver",
+  "notes": [
+    "Wine: CodeWeavers' LGPL CrossOver 26.3 sources (sha256 ac99c8ca…6872) built by github.com/gauthierpiarrette/highball-engine (LGPL-2.1) with its patch series 0001-0024. Corresponding source and patches are public in that repository.",
+    "Runtime frameworks and the bundled DXVK/D3DMetal/cnc-ddraw renderers: Sikarugir Template 1.0.11 (mixed licences, listed in its archive).",
+    "DXMT: LGPL-2.1-or-later (3Shain/dxmt relicensed from MIT after v0.80; commit a444716 carries the LGPL LICENSE). Highball's branch, gauthierpiarrette/dxmt@highball-20260930, overriding the Template's older MIT copy.",
+    "Engine and Template archive SHA-256 verified by GamePort on 2026-10-28; the other components are verified at install time."
+  ],
+  "components": [
+    {
+      "name": "frameworks",
+      "kind": "frameworks",
+      "url": "https://github.com/Sikarugir-App/Wrapper/releases/download/v1.0/Template-1.0.11.tar.xz",
+      "sha256": "9fa15479e7ff6abd99c1d07be285fb95f41fc6991586502427152b1f7d6ccb8a",
+      "size": 84533420,
+      "license": "mixed (LGPL-2.1 GStreamer/gnutls, Apache-2.0 MoltenVK, zlib DXVK, Apple GPTK licence for D3DMetal, …)",
+      "extract": { "subpath": "Template-1.0.11.app/Contents/Frameworks", "into": "frameworks" },
+      "order": 0
+    },
+    {
+      "name": "wine",
+      "kind": "engine",
+      "url": "https://github.com/gauthierpiarrette/highball-engine/releases/download/engine-wine-11.0-20261014T003801Z-0024-app-packages-0023-spatial-mixer/engine-wine-11.0-20261014T003801Z-0024-app-packages-0023-spatial-mixer.tar.gz",
+      "sha256": "1d1a130c0108a4bbb88cd289c3c313292868c3b84010eb315801eba43026e3e8",
+      "size": 334884359,
+      "license": "LGPL-2.1-or-later",
+      "extract": { "subpath": "engine", "into": "engine" },
+      "order": 0
+    },
+    {
+      "name": "moltenvk",
+      "kind": "runtime",
+      "url": "https://github.com/gauthierpiarrette/highball/releases/download/engine-components/moltenvk-1.4.2-shadow-import-1-linear-fallback-1-shadow-readback-1-x86_64.tar.gz",
+      "sha256": "7c84c592c023e761994cf4a0f5fb2e0a8a22bac8dfe3f787c4135a735f873e90",
+      "size": 1733593,
+      "license": "Apache-2.0",
+      "extract": { "subpath": "libMoltenVK.dylib", "into": "frameworks/libMoltenVK.dylib" },
+      "order": 1
+    },
+    {
+      "name": "dxmt",
+      "kind": "renderer",
+      "url": "https://github.com/gauthierpiarrette/highball-engine/releases/download/dxmt-highball-20260930T161516Z-a444716/dxmt-highball-20260930T161516Z-a444716.tar.gz",
+      "sha256": "96feaf5d98d3c6cdc3edea9503e2891d435df8d5bfdf7d3f6998a56ec62bbd58",
+      "size": 18923969,
+      "license": "LGPL-2.1-or-later",
+      "extract": { "subpath": "highball", "into": "renderers/dxmt/wine" },
+      "order": 1
+    },
+    {
+      "name": "winetricks",
+      "kind": "tool",
+      "url": "https://raw.githubusercontent.com/Winetricks/winetricks/5a59ea07513b24093bd90fad943ecf9543cf05bc/src/winetricks",
+      "sha256": "f35c29737ca08a583569e6a3752d52fbe23333c5acfad5f16c4177d25eaf3f4b",
+      "size": 849574,
+      "license": "LGPL-2.1-or-later",
+      "place": "tools/winetricks",
+      "executable": true,
+      "order": 2
+    }
+  ],
+  "baseEnvironment": {
+    "DYLD_FALLBACK_FRAMEWORK_PATH": "${frameworks}",
+    "DYLD_FALLBACK_LIBRARY_PATH": "${frameworks}:${frameworks}/GStreamer.framework/Versions/1.0/lib",
+    "GST_PLUGIN_PATH": "${frameworks}/GStreamer.framework/Versions/1.0/lib/gstreamer-1.0",
+    "DXMT_ALLOW_CROSS_PROCESS_SWAPCHAIN": "1"
+  },
+  "licenses": {
+    "apple-gptk": {
+      "title": "Apple Game Porting Toolkit licence (D3DMetal)",
+      "summary": "D3DMetal belongs to Apple. Its licence allows non-commercial use, unmodified, for developing, testing or evaluating games on Apple hardware. The D3DMetal renderer cannot be used until you accept it; the other renderers (DXMT, DXVK, WineD3D) are not affected.",
+      "url": "https://developer.apple.com/games/game-porting-toolkit/",
+      "gatesRenderers": ["d3dmetal"]
+    }
+  }
+}

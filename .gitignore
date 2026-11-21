@@ -1,0 +1,11 @@
+.build/
+build/
+.swiftpm/
+*.xcodeproj/
+DerivedData/
+.DS_Store
+
+# Local scratch / private research notes
+HANDOFF.md
+reports/
+research_notes/Best Apple Silicon gaming app/

@@ -1,0 +1,22 @@
+{
+  "schema": 1,
+  "id": "the-witcher-3",
+  "title": "The Witcher 3: Wild Hunt",
+  "steamAppID": 292030,
+  "launch": "steam",
+  "renderer": "dxmt",
+  "sync": "msync",
+  "advertiseAVX": false,
+  "environment": {},
+  "launchArguments": [
+    "--launcher-skip"
+  ],
+  "registry": [],
+  "status": "community",
+  "notes": [
+    "The DirectX 11 version plays with DXMT (highball-db). --launcher-skip skips the CD Projekt RED launcher.",
+    "The game must be on an APFS disk; on exFAT its content index breaks (GameToMac)."
+  ],
+  "knownIssues": [],
+  "source": "highball-db (CC0) + GameToMac 0.1.74 notes (facts, independently rewritten)"
+}

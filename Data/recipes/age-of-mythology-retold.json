@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "id": "age-of-mythology-retold",
+  "title": "Age of Mythology: Retold",
+  "steamAppID": 1934680,
+  "launch": "steam",
+  "renderer": "d3dmetal",
+  "sync": "msync",
+  "advertiseAVX": true,
+  "environment": {},
+  "launchArguments": [],
+  "registry": [],
+  "status": "community",
+  "notes": [
+    "highball-db: flawless with D3DMetal on the Wine 11 engine (M4 Pro)."
+  ],
+  "knownIssues": [
+    {
+      "symptom": "'Unknown GPU Vendor' warning",
+      "cause": "Wine reports the GPU vendor as Apple",
+      "fix": "Dismiss the warning; GameToMac uses a helper that fixes the vendor id (not in GamePort yet)"
+    }
+  ],
+  "source": "highball-db (CC0) + GameToMac 0.1.74 notes (facts, independently rewritten)"
+}

@@ -1,0 +1,26 @@
+{
+  "schema": 1,
+  "id": "skyrim-se",
+  "title": "The Elder Scrolls V: Skyrim Special Edition",
+  "steamAppID": 489830,
+  "launch": "steam",
+  "renderer": "dxvk",
+  "sync": "msync",
+  "advertiseAVX": false,
+  "environment": {},
+  "launchArguments": [],
+  "registry": [],
+  "status": "community",
+  "notes": [
+    "highball-db: DXMT and D3DMetal crash after the Bethesda logo, DXVK works well.",
+    "GameToMac runs it with DXMT 0.72 + two patches; the crash when opening the map is a known DXMT bug."
+  ],
+  "knownIssues": [
+    {
+      "symptom": "The engine's own DXVK (Kegworks v1.10.4) crashes at launch in D3D11 games that use pipeline-statistics queries (GamePort lab, M1, Heaven: 10 s).",
+      "cause": "MoltenVK does not support VK_QUERY_TYPE_PIPELINE_STATISTICS; DXVK then resets the query pool it could not create and winevulkan aborts. Whether this game uses the query is not verified.",
+      "fix": "GamePort's DXVK patch (Patches/dxvk, Scripts/build-dxvk.sh) makes these queries return zero and fixes the crash; Heaven D3D11 ran 5 minutes without crashing in the lab. The patched DXVK is not shipped with the engine yet. highball-db says DXMT crashes in this game, so DXVK is the default."
+    }
+  ],
+  "source": "highball-db (CC0) + GameToMac 0.1.74 notes (facts, independently rewritten)"
+}

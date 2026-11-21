@@ -1,0 +1,22 @@
+{
+  "schema": 1,
+  "id": "hogwarts-legacy",
+  "title": "Hogwarts Legacy",
+  "steamAppID": 990080,
+  "launch": "steam",
+  "renderer": "d3dmetal",
+  "sync": "msync",
+  "advertiseAVX": true,
+  "environment": {},
+  "launchArguments": [],
+  "registry": [],
+  "minMacOS": "26.5",
+  "status": "community",
+  "notes": [
+    "DirectX 12 only: D3DMetal.",
+    "Never add -dx11 to Steam's launch options; the game adds its own DX12 flag and crashes at launch with both (highball-db).",
+    "If an AMD driver warning appears: Engine.ini → [SystemSettings] r.WarnOfBadDrivers=0 (GameToMac). Not edited automatically yet."
+  ],
+  "knownIssues": [],
+  "source": "highball-db (CC0) + GameToMac 0.1.74 notes (facts, independently rewritten)"
+}

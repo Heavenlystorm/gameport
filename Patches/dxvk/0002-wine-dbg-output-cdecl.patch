@@ -1,0 +1,15 @@
+diff --git a/src/util/log/log.h b/src/util/log/log.h
+index 3589d70..80c72bc 100644
+--- a/src/util/log/log.h
++++ b/src/util/log/log.h
+@@ -18,7 +18,9 @@ namespace dxvk {
+     None  = 5,
+   };
+   
+-  using PFN_wineLogOutput = int (STDMETHODCALLTYPE *)(const char *);
++  // ntdll exports __wine_dbg_output as __cdecl. Declaring it __stdcall leaves the stack 4 bytes off
++  // after every log line on 32-bit x86; GCC hides that with frame pointers, clang -O3 crashes or hangs.
++  using PFN_wineLogOutput = int (__cdecl *)(const char *);
+ 
+   /**
+    * \brief Logger

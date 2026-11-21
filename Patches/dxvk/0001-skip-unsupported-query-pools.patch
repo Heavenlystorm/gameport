@@ -1,0 +1,76 @@
+diff --git a/src/dxvk/dxvk_gpu_query.cpp b/src/dxvk/dxvk_gpu_query.cpp
+index 40d3a09..d0f3c50 100644
+--- a/src/dxvk/dxvk_gpu_query.cpp
++++ b/src/dxvk/dxvk_gpu_query.cpp
+@@ -164,7 +164,7 @@ namespace dxvk {
+   DxvkGpuQueryHandle DxvkGpuQueryAllocator::allocQuery() {
+     std::lock_guard<dxvk::mutex> lock(m_mutex);
+ 
+-    if (m_handles.size() == 0)
++    if (m_handles.size() == 0 && !m_unsupported)
+       this->createQueryPool();
+ 
+     if (m_handles.size() == 0)
+@@ -208,8 +208,17 @@ namespace dxvk {
+ 
+     VkQueryPool queryPool = VK_NULL_HANDLE;
+ 
+-    if (m_vkd->vkCreateQueryPool(m_vkd->device(), &info, nullptr, &queryPool)) {
++    VkResult vr = m_vkd->vkCreateQueryPool(m_vkd->device(), &info, nullptr, &queryPool);
++
++    if (vr) {
+       Logger::err(str::format("DXVK: Failed to create query pool (", m_queryType, "; ", m_queryPoolSize, ")"));
++
++      // MoltenVK has no pipeline statistics queries. Do not retry every frame; queries
++      // of this type get no handle and report zeros instead.
++      if (vr == VK_ERROR_FEATURE_NOT_PRESENT) {
++        Logger::warn(str::format("DXVK: Query type ", m_queryType, " is not supported, results will be zero"));
++        m_unsupported = true;
++      }
+       return;
+     }
+ 
+@@ -305,6 +314,9 @@ namespace dxvk {
+     query->addQueryHandle(handle);
+     query->end();
+ 
++    if (!handle.queryPool)
++      return;
++
+     cmd->resetQuery(
+       handle.queryPool,
+       handle.queryId);
+@@ -346,6 +358,11 @@ namespace dxvk {
+     const Rc<DxvkCommandList>&  cmd,
+     const Rc<DxvkGpuQuery>&     query) {
+     DxvkGpuQueryHandle handle = m_pool->allocQuery(query->type());
++
++    // No pool for this query type: resetting or beginning a null pool crashes winevulkan.
++    // The query keeps no handle, so it completes with zero results.
++    if (!handle.queryPool)
++      return;
+     
+     cmd->resetQuery(
+       handle.queryPool,
+@@ -372,6 +389,9 @@ namespace dxvk {
+     const Rc<DxvkCommandList>&  cmd,
+     const Rc<DxvkGpuQuery>&     query) {
+     DxvkGpuQueryHandle handle = query->handle();
++
++    if (!handle.queryPool)
++      return;
+     
+     if (query->isIndexed()) {
+       cmd->cmdEndQueryIndexed(
+diff --git a/src/dxvk/dxvk_gpu_query.h b/src/dxvk/dxvk_gpu_query.h
+index 0c45d12..79f85f3 100644
+--- a/src/dxvk/dxvk_gpu_query.h
++++ b/src/dxvk/dxvk_gpu_query.h
+@@ -282,6 +282,7 @@ namespace dxvk {
+     dxvk::mutex                     m_mutex;
+     std::vector<DxvkGpuQueryHandle> m_handles;
+     std::vector<VkQueryPool>        m_pools;
++    bool                            m_unsupported = false;
+ 
+     void createQueryPool();
+ 

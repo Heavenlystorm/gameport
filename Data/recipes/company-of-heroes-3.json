@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "id": "company-of-heroes-3",
+  "title": "Company of Heroes 3",
+  "steamAppID": 1677280,
+  "launch": "steam",
+  "renderer": "d3dmetal",
+  "sync": "msync",
+  "advertiseAVX": false,
+  "environment": {},
+  "launchArguments": [],
+  "registry": [],
+  "status": "community",
+  "notes": [
+    "Single player at ~50 FPS with D3DMetal (highball-db, 2560x1440)."
+  ],
+  "knownIssues": [
+    {
+      "symptom": "Crashes at launch",
+      "cause": "Wine's built-in ucrtbase",
+      "fix": "Microsoft's native ucrtbase.dll for RelicCoH3.exe (GameToMac; not automatic in GamePort)"
+    }
+  ],
+  "source": "highball-db (CC0) + GameToMac 0.1.74 notes (facts, independently rewritten)"
+}

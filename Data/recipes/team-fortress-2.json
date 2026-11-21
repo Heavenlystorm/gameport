@@ -1,0 +1,21 @@
+{
+  "schema": 1,
+  "id": "team-fortress-2",
+  "title": "Team Fortress 2",
+  "steamAppID": 440,
+  "launch": "steam",
+  "renderer": "dxmt",
+  "sync": "msync",
+  "advertiseAVX": false,
+  "environment": {},
+  "launchArguments": [],
+  "registry": [],
+  "status": "verified",
+  "notes": [
+    "highball-db: plays with DXMT; VAC runs in user mode.",
+    "Verified in GamePort (2026-10-30): Apple M1 MacBook Air, macOS 27.0.1, engine x64-crossover26.3-hb20261014. Main menu and gameplay worked through Steam -applaunch.",
+    "TF2 uses Direct3D 9: the 'dxmt' renderer runs D3D9 through DXVK-Kegworks d9vk (Vulkan → MoltenVK → Metal); DXMT itself is for D3D10/11 only."
+  ],
+  "knownIssues": [],
+  "source": "highball-db (CC0)"
+}

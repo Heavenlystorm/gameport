@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "id": "cyberpunk-2077",
+  "title": "Cyberpunk 2077",
+  "steamAppID": 1091500,
+  "launch": "steam",
+  "renderer": "d3dmetal",
+  "sync": "msync",
+  "advertiseAVX": true,
+  "environment": {},
+  "launchArguments": [],
+  "registry": [],
+  "status": "community",
+  "notes": [
+    "60-82 FPS in game with D3DMetal + FSR 2.1 on M5, ~17 FPS with Steam Deck settings on M4 (highball-db)."
+  ],
+  "knownIssues": [],
+  "source": "highball-db (CC0)"
+}

@@ -1,0 +1,30 @@
+{
+  "schema": 1,
+  "id": "steam",
+  "title": "Steam (client only)",
+  "launch": "steam",
+  "renderer": "dxmt",
+  "sync": "none",
+  "advertiseAVX": false,
+  "environment": {},
+  "launchArguments": [],
+  "registry": [],
+  "status": "community",
+  "notes": [
+    "Installs only the Windows Steam client, without a game. Steam's UI freezes under msync/esync, so sync is off.",
+    "Steam's first start downloads and unpacks the client (~235 MB); it can take a few minutes depending on your connection and may look frozen (measured on M1: update ~1 min, UI ~40 s)."
+  ],
+  "knownIssues": [
+    {
+      "symptom": "The Steam window stays black on the Wine 11 engine",
+      "cause": "GPU acceleration in web views is off in Steam's settings",
+      "fix": "Settings → Interface → keep 'GPU accelerated rendering in web views' on"
+    },
+    {
+      "symptom": "Steam closes before sign-in after its first update",
+      "cause": "A Steam client issue (also seen on Linux)",
+      "fix": "Open it again; it does not repeat after the first sign-in"
+    }
+  ],
+  "source": "highball-db (CC0) recipes/launchers/steam"
+}

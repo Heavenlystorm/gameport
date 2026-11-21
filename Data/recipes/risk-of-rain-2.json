@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "id": "risk-of-rain-2",
+  "title": "Risk of Rain 2",
+  "steamAppID": 632360,
+  "launch": "steam",
+  "renderer": "dxmt",
+  "sync": "msync",
+  "advertiseAVX": false,
+  "environment": {},
+  "launchArguments": [],
+  "registry": [],
+  "status": "community",
+  "notes": [
+    "highball-db: flawless with DXMT on the Wine 11 engine."
+  ],
+  "knownIssues": [],
+  "source": "highball-db (CC0)"
+}

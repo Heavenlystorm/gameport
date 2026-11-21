@@ -1,0 +1,22 @@
+{
+  "schema": 1,
+  "id": "grand-theft-auto-v",
+  "title": "Grand Theft Auto V Legacy (Story Mode)",
+  "steamAppID": 271590,
+  "launch": "steam",
+  "renderer": "dxmt",
+  "sync": "msync",
+  "advertiseAVX": false,
+  "environment": {},
+  "launchArguments": [
+    "-nobattleye"
+  ],
+  "registry": [],
+  "status": "community",
+  "notes": [
+    "Story Mode only; GTA Online is blocked by BattlEye.",
+    "Steam starts the Rockstar Games Launcher; you sign in to your Rockstar account in that window."
+  ],
+  "knownIssues": [],
+  "source": "highball-db (CC0)"
+}

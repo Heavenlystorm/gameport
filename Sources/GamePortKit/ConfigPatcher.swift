@@ -119,7 +119,12 @@ public enum ConfigPatcher {
             throw GamePortError.invalid("expected a regular INI file")
         }
         let original = try Data(contentsOf: file)
-        guard let text = String(data: original, encoding: .utf8) else { throw GamePortError.unsupported("INI encoding in \(entry.file)") }
+        // Newer macOS Foundation strips a leading UTF-8 BOM in String(data:encoding:.utf8); preserve it explicitly.
+        let hasBOM = original.starts(with: [0xEF, 0xBB, 0xBF])
+        guard let decoded = String(data: hasBOM ? original.dropFirst(3) : original, encoding: .utf8) else {
+            throw GamePortError.unsupported("INI encoding in \(entry.file)")
+        }
+        let text = hasBOM ? "\u{FEFF}" + decoded : decoded
         let updated = try adding(entry, to: text)
         guard updated != text else { return "Kept existing \(entry.key) in \(entry.file)" }
         let backup = file.appendingPathExtension("gameport-\(UUID().uuidString).bak")

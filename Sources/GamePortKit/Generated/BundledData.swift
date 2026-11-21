@@ -325,12 +325,22 @@ enum BundledData {
   "environment": {},
   "launchArguments": [],
   "registry": [],
+  "configDefaults": {
+    "ini": [
+      {
+        "file": "Hogwarts Legacy/Saved/Config/WindowsNoEditor/Engine.ini",
+        "section": "SystemSettings",
+        "key": "r.WarnOfBadDrivers",
+        "value": "0"
+      }
+    ]
+  },
   "minMacOS": "26.5",
   "status": "community",
   "notes": [
     "DirectX 12 only: D3DMetal.",
     "Never add -dx11 to Steam's launch options; the game adds its own DX12 flag and crashes at launch with both (highball-db).",
-    "If an AMD driver warning appears: Engine.ini → [SystemSettings] r.WarnOfBadDrivers=0 (GameToMac). Not edited automatically yet."
+    "If an AMD driver warning appears, close the game and apply the optional config default for Engine.ini (GameToMac)."
   ],
   "knownIssues": [],
   "source": "highball-db (CC0) + GameToMac 0.1.74 notes (facts, independently rewritten)"

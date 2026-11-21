@@ -28,7 +28,8 @@ final class AppModel: ObservableObject {
     @Published var checks: [GamePort.Check] = []
     @Published var engines: [String] = []
     @Published var recipes: [Recipe] = []
-    @Published var profiles: [Profile] = []
+    private var profilesByRecipe: [String: Profile] = [:]
+    private var labResultsByProfile: [String: [LabResult]] = [:]
     @Published var busy: String?
     @Published var log: [String] = []
     @Published var gptkAccepted = false
@@ -40,7 +41,9 @@ final class AppModel: ObservableObject {
         checks = gameport.doctor()
         engines = gameport.engines.installed().map(\.id)
         recipes = gameport.catalog.sorted
-        profiles = gameport.profiles.all()
+        let profiles = gameport.profiles.all()
+        profilesByRecipe = Dictionary(profiles.compactMap { p in p.recipeID.map { ($0, p) } }, uniquingKeysWith: { first, _ in first })
+        labResultsByProfile = profilesByRecipe.values.reduce(into: [:]) { $0[$1.id] = gameport.profiles.labResults($1.id) }
         gptkAccepted = gameport.licenses.isAccepted("apple-gptk")
         steamBase = (try? gameport.steamBase()).flatMap { $0.isReady ? $0.stamp : nil }
     }
@@ -65,10 +68,10 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func profile(for recipe: Recipe) -> Profile? { profiles.first { $0.recipeID == recipe.id } }
+    func profile(for recipe: Recipe) -> Profile? { profilesByRecipe[recipe.id] }
 
     func evidence(for recipe: Recipe) -> Evidence {
-        Evidence.of(recipe, results: profile(for: recipe).map { gameport.profiles.labResults($0.id) } ?? [],
+        Evidence.of(recipe, results: profile(for: recipe).flatMap { labResultsByProfile[$0.id] } ?? [],
                     antiCheat: AntiCheatDB.bundled.entry(for: recipe))
     }
 }
@@ -76,6 +79,7 @@ final class AppModel: ObservableObject {
 struct ContentView: View {
     @EnvironmentObject var model: AppModel
     @State private var selection: String? = "setup"
+    @State private var filter = RecipeFilter()
 
     var body: some View {
         NavigationSplitView {
@@ -84,7 +88,19 @@ struct ContentView: View {
                     Label("Setup", systemImage: "wrench.and.screwdriver").tag("setup")
                 }
                 Section("Games") {
-                    ForEach(model.recipes) { r in
+                    Menu("Filter recipes", systemImage: "line.3.horizontal.decrease.circle") {
+                        Picker("Status", selection: $filter.status) {
+                            Text("All statuses").tag(nil as Recipe.Status?)
+                            ForEach(Recipe.Status.allCases, id: \.self) { Text($0.rawValue.capitalized).tag(Optional($0)) }
+                        }
+                        Picker("Renderer", selection: $filter.renderer) {
+                            Text("All renderers").tag(nil as Renderer?)
+                            ForEach(Renderer.allCases, id: \.self) { Text($0.rawValue).tag(Optional($0)) }
+                        }
+                    }
+                    let matches = filter.apply(to: model.recipes)
+                    if matches.isEmpty { Text("No matching recipes").foregroundStyle(.secondary) }
+                    ForEach(matches) { r in
                         HStack {
                             EvidenceIcon(level: model.evidence(for: r).level)
                             Text(r.title)
@@ -95,6 +111,7 @@ struct ContentView: View {
                 }
             }
             .navigationSplitViewColumnWidth(min: 240, ideal: 280)
+            .searchable(text: $filter.query, placement: .sidebar, prompt: "Game, recipe ID or Steam ID")
         } detail: {
             VStack(spacing: 0) {
                 Group {
@@ -251,6 +268,16 @@ struct GameView: View {
                             }.padding(.top, 4)
                         }
                     }.frame(maxWidth: .infinity, alignment: .leading).padding(4)
+                }
+                if let profile, recipe.configDefaults != nil {
+                    Button("Apply missing recipe settings") {
+                        model.job("Recipe settings") { k, progress in
+                            try k.applyConfigDefaults(profile.id, progress: progress)
+                            return "Recipe settings checked"
+                        }
+                    }
+                    .disabled(model.busy != nil)
+                    .help("Close the game and Steam first. Existing settings are kept.")
                 }
                 if let profile, recipe.steamAppID != nil { LabView(profile: profile) }
                 if let profile { SnapshotsView(profile: profile) }

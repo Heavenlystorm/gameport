@@ -34,6 +34,17 @@ swift build -c release
 using almost no disk. Profiles stay isolated: the copies split on first write. Nobody ever signs in to the
 base; you sign in separately in each profile.
 
+**Find a recipe.** Search by game name, recipe ID or Steam app ID in the sidebar or with
+`gameport recipes`. Both support status and renderer filters. For example,
+`gameport recipes fortress --status verified --renderer dxmt` lists matching verified DXMT recipes.
+
+**Optional game settings.** After the game has created its settings folder, close the game and Steam.
+Choose **Apply missing recipe settings** or run `gameport config <profile>`. Hogwarts Legacy includes
+the optional AMD driver warning setting. GamePort adds missing keys to the game's UTF-8 INI file and
+keeps a byte-for-byte backup beside each file it changes. The log names the backup. Recipe authors
+can also supply named REG_SZ and REG_DWORD defaults under the game's Wine AppDefaults registry key.
+Existing values take precedence on every run.
+
 **Snapshots.** Before a Steam, game or engine update, `gameport snapshot <profile>` saves the profile's state;
 if something breaks, `gameport snapshot restore <profile> <name>` rolls it back. An automatic snapshot is taken
 before Steam's first start each day (the newest two are kept; turn it off with
@@ -47,6 +58,12 @@ counts as "not measured", unless the game process never started or the log shows
 `gameport lab <profile> auto` ("Find the best renderer" in the app) tries DXMT, D3DMetal (once Apple's licence
 is accepted) and DXVK in turn, and sets the profile to the one with the highest average FPS after warm-up
 among those that worked to the end.
+
+The Lab reports 1% low FPS as 1000 divided by the 99th-percentile present interval in milliseconds.
+It needs at least 100 unredacted frame intervals from the measured game in that phase of the run.
+With redacted timings the frame counter still supplies average FPS and the slowest second.
+The result also records the highest macOS thermal state sampled at launch, at 30-second intervals
+and at the end. Crash findings distinguish Wine exceptions, Vulkan failures and Steam GPU restart loops.
 
 **Anti-cheat.** `gameport anticheat <game name|Steam id>` tells you before downloading whether a game's
 anti-cheat blocks it on a Mac (1,166 games, highball-db / Are We Anti-Cheat Yet?, MIT). The app shows the same

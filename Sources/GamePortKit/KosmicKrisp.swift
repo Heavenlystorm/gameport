@@ -29,13 +29,13 @@ extension EngineStore {
         try Shell.run("/usr/bin/xcrun", ["clang", "-arch", arch.rawValue, "-mmacosx-version-min=26.0", "-dynamiclib", "-O2",
                                         "-fvisibility=hidden", "-install_name", "@rpath/libgameport_vulkan_shim.dylib", "-o", shim.path, source.path])
         try Shell.run("/usr/bin/codesign", ["--force", "--sign", "-", shim.path])
-        try Shell.run("/usr/bin/lipo", ["-verify_arch", arch.rawValue, overlay.appendingPathComponent("libvulkan_kosmickrisp.dylib").path])
+        try Shell.run("/usr/bin/lipo", [overlay.appendingPathComponent("libvulkan_kosmickrisp.dylib").path, "-verify_arch", arch.rawValue])
         try FileManager.default.createSymbolicLink(atPath: overlay.appendingPathComponent("libMoltenVK-engine.dylib").path,
                                                    withDestinationPath: "../../frameworks/libMoltenVK.dylib")
         try withInstallLock(id) {
             let current = try engine(id)
             guard current.manifest == installed.manifest else { throw GamePortError.invalid("engine changed during installation, retry") }
-            try Shell.run("/usr/bin/lipo", ["-verify_arch", arch.rawValue, current.frameworks.appendingPathComponent("libMoltenVK.dylib").path])
+            try Shell.run("/usr/bin/lipo", [current.frameworks.appendingPathComponent("libMoltenVK.dylib").path, "-verify_arch", arch.rawValue])
             let renderers = current.root.appendingPathComponent("renderers")
             try paths.ensure(renderers)
             try publish(overlay, at: renderers.appendingPathComponent("kosmickrisp"))

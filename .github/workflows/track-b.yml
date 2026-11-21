@@ -52,11 +52,52 @@ jobs:
                   print(cli("engine","kosmickrisp",engine.name))
                   overlay = engine / "renderers/kosmickrisp"
                   shim = str(overlay/"libMoltenVK.dylib")
-                  run("lipo","-verify_arch",arch,shim)
-                  run("lipo","-verify_arch",arch,str(overlay/"libvulkan_kosmickrisp.dylib"))
+                  run("lipo",shim,"-verify_arch",arch)
+                  run("lipo",str(overlay/"libvulkan_kosmickrisp.dylib"),"-verify_arch",arch)
                   run("codesign","--verify",shim)
                   assert "_vkGetInstanceProcAddr" in run("nm","-gU",shim)
-                  assert (overlay/"libMoltenVK-engine.dylib").resolve() == fw
+                  assert (overlay/"libMoltenVK-engine.dylib").resolve() == fw.resolve()
+                  previous_inode = overlay.stat().st_ino
+                  run("clang","-arch","arm64" if arch=="x86_64" else "x86_64","-dynamiclib",str(source),"-o",str(fw))
+                  rejected = subprocess.run([".build/release/gameport","engine","kosmickrisp",engine.name],env=env,capture_output=True,text=True)
+                  assert rejected.returncode and "lipo" in rejected.stderr and overlay.stat().st_ino == previous_inode, rejected
+                  run("clang","-arch",arch,"-dynamiclib",str(source),"-o",str(fw))
               assert "arm64" in cli("engine","list")
               assert "x86_64" in cli("engine","list")
               print("Verified native and Rosetta driver installation, signatures, forwarding links and retries.")
+              for arch in ["x86_64", "arm64"]:
+                  name = "test-" + arch
+                  engine = root / "engines" / name
+                  for path in [src["wineLoader"], src["wineServer"]]:
+                      exe = engine / path
+                      exe.parent.mkdir(parents=True,exist_ok=True)
+                      exe.write_text("#!/bin/sh\nexit 0\n")
+                      exe.chmod(0o755)
+                  (engine / "renderers/dxmt/wine").mkdir(parents=True)
+                  if arch == "arm64":
+                      (engine/"modules").mkdir()
+                      for dll in ["xtajit64.dll", "xtajit.dll"]:
+                          (engine/"modules"/dll).write_bytes(b"fixture")
+                  print(cli("profile","create","3dmark-demo",arch,"--engine",name))
+                  profile = root / "profiles" / arch
+                  steam = profile / "prefix/drive_c/Program Files (x86)/Steam"
+                  (steam/"steamapps").mkdir(parents=True)
+                  (steam/"steam.exe").touch()
+                  (steam/"steamapps/appmanifest_231350.acf").write_text('"StateFlags" "4"')
+                  payload = json.loads((profile/"profile.json").read_text())
+                  payload["autoSnapshots"] = False
+                  (profile/"profile.json").write_text(json.dumps(payload))
+              print(cli("profile","fallback","arm64","x86_64"))
+              before = {a:(root/"profiles"/a/"profile.json").read_bytes() for a in ["arm64","x86_64"]}
+              print(cli("lab","arm64","compare","x86_64","1"))
+              for arch,original in before.items():
+                  profile = root/"profiles"/arch
+                  result = json.loads(next((profile/"lab").glob("*.json")).read_text())
+                  assert (result["engineArchitecture"],result["engineID"],result["verdict"]) == (arch,"test-"+arch,"noFrames"), result
+                  assert (profile/"profile.json").read_bytes() == original
+              (root/"engines/test-arm64/modules/xtajit64.dll").unlink()
+              launch = cli("play","arm64")
+              print(launch)
+              assert "Using fallback x86_64" in launch
+              print(cli("stop","arm64"))
+              print("Both Lab records and a fallback launch verified with isolated engine fixtures.")

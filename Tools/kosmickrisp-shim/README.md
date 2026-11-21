@@ -8,11 +8,12 @@ process whose .exe lives under `steamapps\common\` (set `GAMEPORT_KOSMICKRISP_MA
 Every other process (Steam, its web helper, explorer, Wine's services) is forwarded to the engine's real
 MoltenVK: on KosmicKrisp Steam's web UI got no device and its window stayed black (first test, 2026-10-31).
 
-Setup (once): downloads Sikarugir's `kosmickrisp-x86_64.zip` (release 20261029, SHA-256 `5c55c95b…0fc93b`) into
-`~/Downloads/gameport-build/kk`, then builds the shim into the engine:
+The optional installer downloads the Sikarugir release for the engine's architecture into GamePort's
+verified download cache. It builds the shim from this repository's source and publishes both libraries
+together. The legacy script invokes the same installer for the bundled engine.
 
 ```sh
-Tools/kosmickrisp-shim/install.sh
+gameport engine kosmickrisp <engine-id>
 ```
 
 Then pick it for a game: `.build/debug/gameport vulkan <profile> kosmickrisp` (back with `moltenvk`). GamePort sets

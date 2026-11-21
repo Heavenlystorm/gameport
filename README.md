@@ -57,11 +57,46 @@ information on the game's badge: kernel anti-cheat is "Will not run", anti-cheat
 does not support. `Scripts/build-dxvk.sh` builds DXVK with the patches in `Patches/dxvk/` on this Mac and installs
 it for the DXVK renderer only (`--revert` undoes it). The build tools are downloaded to `~/Downloads/gameport-build`.
 
-**KosmicKrisp (experimental).** Games that reach Metal through Vulkan (DXVK, vkd3d) can use KosmicKrisp, Mesa's
-open Vulkan 1.4 driver on Metal, instead of MoltenVK. `Tools/kosmickrisp-shim/install.sh` downloads Sikarugir's
-build (pinned by SHA-256) and builds GamePort's shim into the engine; then `gameport vulkan <profile> kosmickrisp` (or the
-picker in the app's Lab box) switches one game. Only the game uses it; Steam and Wine's own programs stay on MoltenVK.
-Team Fortress 2 (D3D9 through DXVK) renders on it. Needs macOS 26 or later.
+**KosmicKrisp (experimental).** On macOS 26 or later, select **Install KosmicKrisp for this engine** in the game's Lab
+or run `gameport engine kosmickrisp <engine-id>`. GamePort verifies the architecture-specific Mesa download against its
+SHA-256 pin, compiles the shim with Apple's Command Line Tools and installs it alongside the engine's MoltenVK.
+Select it with the Lab's driver picker or `gameport vulkan <profile> kosmickrisp`. Steam keeps using MoltenVK.
+Use `gameport vulkan <profile> moltenvk` to switch the game back.
+
+### Compare a Rosetta and a FEX engine
+
+The bundled engine uses x86_64 Wine under Rosetta. An engine packager can supply a native ARM64 Wine + FEX
+build with its own signed binaries, required entitlements, guest modules and matching renderer libraries.
+Install its trusted manifest with `gameport engine install /path/to/manifest.json`. Each downloadable
+component needs an HTTPS URL and SHA-256 digest. Set `arch` to `arm64`, declare the required `minMacOS`,
+and point `fexModules.x64` and `fexModules.x86` at the packaged `xtajit64.dll` and `xtajit.dll`, relative to
+the engine root. Set `supportsKosmicKrisp` only for loaders supporting `CX_LIBVULKAN` / `CX_ACTIVE_GRAPHICS_BACKEND`
+with a matching `frameworks/libMoltenVK.dylib`. Use the DXMT or DXVK renderer for open D3D12 experiments.
+
+```sh
+gameport engine list
+gameport profile create 3dmark-demo bench-rosetta --engine x64-crossover26.3-hb20261014
+gameport profile create 3dmark-demo bench-fex --engine <installed-arm64-engine-id>
+# Install Steam and the game in each profile before running the comparison.
+gameport lab bench-fex compare bench-rosetta 180
+gameport profile fallback bench-fex bench-rosetta
+gameport play bench-fex
+```
+
+Each engine gets its own prefix, saves, Steam install and HOME. The Lab runs both copies in sequence using
+the first profile's renderer, sync mode and Vulkan driver, and saves the engine ID and architecture with each
+measurement. Play tries the configured alternate when engine preflight fails, before starting Steam. The
+launch log identifies the chosen profile. Remove the fallback with `gameport profile fallback bench-fex off`.
+
+### Build vkd3d-proton for a D3D12 experiment
+
+Run `Scripts/build-vkd3d-proton.sh` on a Mac with Git, Python 3 and the Command Line Tools. It cross-compiles
+the pinned upstream v3.1 revision with llvm-mingw and prints the directory containing the 64-bit Wine overlay.
+For a dedicated DXMT/DXVK lab profile, add that directory as `WINEDLLPATH_PREPEND+` in the profile's
+`environment` object and append `d3d12,d3d12core=n,b` to `WINEDLLOVERRIDES`. Remove those entries to return
+to Wine's vkd3d. Upstream vkd3d-proton expects a compatible DXGI implementation and Vulkan features.
+GamePort's shipping DXVK 1.10 predates upstream's DXVK 2.1+ integration. Record the result for the specific
+game, engine and driver before treating this path as playable. [Upstream requirements](https://github.com/HansKristian-Work/vkd3d-proton/tree/v3.1#using-vkd3d-proton)
 
 `Scripts/make-app.sh` builds a double-clickable `GamePort.app`.
 

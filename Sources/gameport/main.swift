@@ -11,12 +11,13 @@ Usage:
   \(cli) engine list                    Installed engines
   \(cli) license show apple-gptk        Show the licence summary
   \(cli) license accept apple-gptk      Accept Apple's GPTK licence for D3DMetal
-  \(cli) recipes                        Known game recipes
+  \(cli) recipes [words or Steam ID] [--status <status>] [--renderer <renderer>]
   \(cli) anticheat <game name|Steam id> Before downloading: does anti-cheat block it on a Mac?
   \(cli) base build                     Build the Steam base (once; later profiles are ready in seconds)
   \(cli) base status                    Steam base status
   \(cli) profile create <recipe> [id]   Create an isolated Windows environment for a game
   \(cli) profile list                   Profiles
+  \(cli) config <profile>               Apply missing optional recipe settings after closing the game
   \(cli) snapshot <profile> [name]      Snapshot a profile (before an update)
   \(cli) snapshot list <profile>        Snapshots
   \(cli) snapshot restore <profile> <name>  Roll a profile back to a snapshot
@@ -99,10 +100,38 @@ do {
         }
 
     case "recipes":
-        for r in gameport.catalog.sorted {
+        var filter = RecipeFilter()
+        var words: [String] = []
+        var tokens = args.makeIterator()
+        while let token = tokens.next() {
+            switch token {
+            case "--status":
+                guard let value = tokens.next(), let status = Recipe.Status(rawValue: value) else {
+                    fail("--status expects one of " + Recipe.Status.allCases.map(\.rawValue).joined(separator: ", "))
+                }
+                filter.status = status
+            case "--renderer":
+                guard let value = tokens.next(), let renderer = Renderer(rawValue: value) else {
+                    fail("--renderer expects one of " + Renderer.allCases.map(\.rawValue).joined(separator: ", "))
+                }
+                filter.renderer = renderer
+            default:
+                guard !token.hasPrefix("--") else { fail("unknown recipes option \(token)") }
+                words.append(token)
+            }
+        }
+        filter.query = words.joined(separator: " ")
+        let matches = filter.apply(to: gameport.catalog.sorted)
+        if matches.isEmpty { print("No matching recipes.") }
+        for r in matches {
             let appID = r.steamAppID.map { "Steam \($0)" } ?? "-"
             print("\(r.id.padding(toLength: 26, withPad: " ", startingAt: 0)) \(r.renderer.rawValue.padding(toLength: 9, withPad: " ", startingAt: 0)) \(r.status.rawValue.padding(toLength: 10, withPad: " ", startingAt: 0)) \(appID.padding(toLength: 14, withPad: " ", startingAt: 0)) \(r.title)")
         }
+
+    case "config":
+        let id = arg(0, "profile")
+        guard args.count == 1 else { fail("expected config <profile>") }
+        try gameport.applyConfigDefaults(id, progress: progress)
 
     case "base":
         let base = try gameport.steamBase()

@@ -3,14 +3,15 @@ import Foundation
 /// Measures a game the way a player would see it: launch through Steam, let it run, read Apple's
 /// Metal HUD log (once a second, unified log subsystem com.apple.metal.hud) and decide whether it works.
 ///
-/// The per-frame part of each HUD line is redacted as <private>, so FPS comes from the first field,
-/// the frame number, between lines. Steam's web helper renders with Metal too; lines carry the
+/// When per-frame timings are redacted as <private>, only counter-based rates are available.
+/// Steam's web helper renders with Metal too; lines carry the
 /// process id, and the process with the most frames is taken to be the game.
 public enum MetalHUDLog {
     public struct Sample: Equatable, Sendable {
         public var time: TimeInterval   // seconds since 1970
         public var pid: Int
         public var frame: Double
+        public var presentIntervalsMS: [Double] = []
     }
 
     /// Parses `log stream --style compact` output:
@@ -26,18 +27,30 @@ public enum MetalHUDLog {
                   let open = line.firstIndex(of: "["), let colon = line[open...].firstIndex(of: ":"),
                   let pid = Int(line[line.index(after: open)..<colon]) else { continue }
             let payload = line[line.range(of: "metal-HUD:")!.upperBound...]
-            guard let first = payload.split(separator: ",").first,
-                  let frame = Double(first.trimmingCharacters(in: .whitespaces)) else { continue }
-            samples.append(Sample(time: date.timeIntervalSince1970, pid: pid, frame: frame))
+            let fields = payload.split(separator: ",", omittingEmptySubsequences: false)
+            guard let first = fields.first, let frame = Double(first.trimmingCharacters(in: .whitespaces)),
+                  frame.isFinite, frame >= 0, frame < Double(Int.max) else { continue }
+            // Apple logs first frame, missed frames, memory, then (present interval, GPU time) in ms.
+            var intervals: [Double] = []
+            for index in stride(from: 3, to: fields.count - 1, by: 2) {
+                if let ms = Double(fields[index].trimmingCharacters(in: .whitespaces)), ms.isFinite, ms > 0,
+                   let gpu = Double(fields[index + 1].trimmingCharacters(in: .whitespaces)), gpu.isFinite, gpu >= 0 {
+                    intervals.append(ms)
+                }
+            }
+            samples.append(Sample(time: date.timeIntervalSince1970, pid: pid, frame: frame, presentIntervalsMS: intervals))
         }
         return samples
     }
 
     /// The process that presented the most frames.
     public static func busiestProcess(_ samples: [Sample]) -> Int? {
-        Dictionary(grouping: samples, by: \.pid)
-            .mapValues { s in (s.map(\.frame).max() ?? 0) - (s.filter { $0.frame > 0 }.map(\.frame).min() ?? 0) }
-            .max { $0.value < $1.value }?.key
+        let groups = Dictionary(grouping: samples, by: \.pid)
+        let spans = groups.mapValues { group -> Double in
+            let counters = group.map(\.frame).filter { $0 > 0 }
+            return (counters.max() ?? 0) - (counters.min() ?? 0)
+        }
+        return spans.max { a, b in a.value == b.value ? a.key > b.key : a.value < b.value }?.key
     }
 }
 
@@ -52,24 +65,57 @@ public struct LabStats: Codable, Sendable, Equatable {
     /// Gaps over 2 s, or seconds where the frame counter did not move (shader compiles, loads, hangs).
     public var stalls: Int
     public var stallSeconds: Double
+    /// 1000 / nearest-rank p99 present interval in ms. Requires at least 100 timed frames.
+    public var onePercentLowFPS: Double? = nil
 
     /// Stats for one process's samples taken at or after `after` (seconds since 1970).
     /// Frame number 0 shows up between real lines (an idle surface or a counter reset) and is skipped.
     public static func from(_ samples: [MetalHUDLog.Sample], after: TimeInterval = 0) -> LabStats? {
         let points = samples.filter { $0.time >= after && $0.frame > 0 }.sorted { $0.time < $1.time }
+        var measuredFrames = 0.0, measuredSeconds = 0.0
         var rates: [(rate: Double, span: Double)] = []
         for (a, b) in zip(points, points.dropFirst()) where b.time > a.time && b.frame >= a.frame {
-            rates.append(((b.frame - a.frame) / (b.time - a.time), b.time - a.time))
+            let frames = b.frame - a.frame, span = b.time - a.time
+            measuredFrames += frames
+            measuredSeconds += span
+            rates.append((frames / span, span))
         }
-        guard let first = points.first, let last = points.last, !rates.isEmpty, last.time > first.time else { return nil }
+        guard !rates.isEmpty, measuredFrames < Double(Int.max) else { return nil }
         let stalls = rates.filter { $0.rate == 0 || $0.span > 2 }
         let sorted = rates.map(\.rate).sorted()
         func r(_ x: Double) -> Double { (x * 10).rounded() / 10 }
-        return LabStats(frames: Int(last.frame - first.frame), seconds: r(last.time - first.time),
-                        averageFPS: r((last.frame - first.frame) / (last.time - first.time)),
+        let intervals = points.flatMap(\.presentIntervalsMS).sorted()
+        let p99 = intervals.count >= 100 ? intervals[Int(ceil(Double(intervals.count) * 0.99)) - 1] : nil
+        let low = p99.map { r(1000 / $0) }.flatMap { $0.isFinite ? $0 : nil }
+        return LabStats(frames: Int(measuredFrames), seconds: r(measuredSeconds),
+                        averageFPS: r(measuredFrames / measuredSeconds),
                         typicalFPS: r(sorted[sorted.count / 2]), slowestFPS: r(sorted[0]),
-                        stalls: stalls.count, stallSeconds: r(stalls.map(\.span).reduce(0, +)))
+                        stalls: stalls.count, stallSeconds: r(stalls.map(\.span).reduce(0, +)), onePercentLowFPS: low)
     }
+}
+
+/// macOS thermal pressure sampled at launch, every Lab poll, and just before stopping the game.
+public enum LabThermalState: Int, Codable, Sendable {
+    case nominal, fair, serious, critical
+
+    var label: String {
+        switch self {
+        case .nominal: return "nominal"
+        case .fair: return "fair"
+        case .serious: return "serious"
+        case .critical: return "critical"
+        }
+    }
+
+    static func current() -> Self? {
+        #if os(macOS)
+        return Self(rawValue: ProcessInfo.processInfo.thermalState.rawValue)
+        #else
+        return nil
+        #endif
+    }
+
+    static func peak(_ samples: [Self]) -> Self? { samples.max { $0.rawValue < $1.rawValue } }
 }
 
 public struct LabResult: Codable, Sendable {
@@ -103,6 +149,7 @@ public struct LabResult: Codable, Sendable {
     public var crashSigns: [String]? = nil
     /// The Vulkan driver the game ran on (nil in older results = MoltenVK).
     public var vulkanDriver: VulkanDriver? = nil
+    public var peakThermalState: LabThermalState? = nil
 
     /// "dxmt", or "dxmt + KosmicKrisp" when the game ran on KosmicKrisp.
     public var setup: String {
@@ -116,28 +163,42 @@ public struct LabResult: Codable, Sendable {
         case .works: what = "works"
         case .stopped: what = "stopped rendering (crash or hang)"
         case .noFrames: what = "no frames"
-        case .notVisible: return "\(setup): not measured, the game window was not in front"
+        case .notVisible: return "\(setup): not measured, the game window was not in front" + thermalSummary
         }
         let fps = (steady ?? whole).map { s in
-            "average \(s.averageFPS) FPS, typical \(s.typicalFPS), slowest second \(s.slowestFPS), \(s.stalls) stalls / \(s.stallSeconds) s"
+            let low = s.onePercentLowFPS.map { "1% low \($0) FPS" } ?? "1% low unavailable"
+            return "average \(s.averageFPS) FPS, typical \(s.typicalFPS), \(low), slowest second \(s.slowestFPS), \(s.stalls) stalls / \(s.stallSeconds) s"
         } ?? "FPS not measured"
         var why: [String] = []
         if gameStarted == false { why.append("the game process never started") }
         why += crashSigns ?? []
         let reasons = verdict == .works || why.isEmpty ? "" : " (" + why.joined(separator: "; ") + ")"
-        return "\(setup): \(what)\(reasons); \(fps)"
+        return "\(setup): \(what)\(reasons); \(fps)" + thermalSummary
     }
+
+    private var thermalSummary: String { peakThermalState.map { ", peak thermal state \($0.label)" } ?? "" }
 
     /// Classifies a run: frames must still be advancing in the last `window` seconds.
     /// A covered window only excuses missing frames when the game is not known to have failed: it never
     /// started, or the log shows a crash (a TF2 run hid a Steam web-helper crash loop this way).
     static func verdict(_ samples: [MetalHUDLog.Sample], end: TimeInterval, window: TimeInterval = 30,
-                        frontmostShare: Double? = nil, gameStarted: Bool? = nil, crashSigns: [String] = []) -> Verdict {
+                        frontmostShare: Double? = nil, gameStarted: Bool? = nil, crashSigns: [String] = [],
+                        gameExited: Bool = false) -> Verdict {
+        if gameStarted == false { return .noFrames }
         let measured = measuredVerdict(samples, end: end, window: window)
+        if gameExited { return measured == .noFrames ? .noFrames : .stopped }
         if measured != .works, let share = frontmostShare, share < 0.5, gameStarted != false, crashSigns.isEmpty {
             return .notVisible
         }
         return measured
+    }
+}
+
+/// Pure analysis of the log slices written during one trial. Findings are returned in a fixed order.
+enum LabTriage {
+    static func findings(game: String, cef: String, bootstrap: String?, gameExited: Bool) -> [String] {
+        crashSigns(inLog: game) + steamCrashSigns(inCEFLog: cef, bootstrap: bootstrap)
+            + (gameExited ? ["the game exited before the end"] : [])
     }
 
     /// Crash evidence in the part of game.log a run wrote. Steam's web helper normally starts twice;
@@ -148,7 +209,9 @@ public struct LabResult: Codable, Sendable {
         let helperStarts = lines.filter { $0.contains("Game: steamwebhelper.exe") }.count
         if helperStarts > 4 { signs.append("Steam web helper restarted \(helperStarts) times") }
         for (needle, label) in [("Unhandled page fault", "page fault"), ("Unhandled exception", "unhandled exception"),
-                                ("stack overflow", "stack overflow")] {
+                                ("stack overflow", "stack overflow"),
+                                ("Failed to create Vulkan", "Vulkan initialization failed"),
+                                ("VK_ERROR_DEVICE_LOST", "Vulkan device lost")] {
             let n = lines.filter { $0.contains(needle) }.count
             if n > 0 { signs.append(n == 1 ? label : "\(label) ×\(n)") }
         }
@@ -159,11 +222,13 @@ public struct LabResult: Codable, Sendable {
     /// process and gives up after a few tries, which leaves Steam's window black and the game unlaunched.
     /// `bootstrap` is the run's part of bootstrap_log.txt, which Steam writes to first on every start.
     static func steamCrashSigns(inCEFLog text: String, bootstrap: String? = nil) -> [String] {
-        if let bootstrap, !bootstrap.contains("Startup") { return ["Steam itself never started"] }
         let gpuCrashes = text.split(separator: "\n").filter { $0.contains("GPU process exited unexpectedly") }.count
+        if let bootstrap, !bootstrap.contains("Startup"), text.isEmpty { return ["Steam itself never started"] }
         return gpuCrashes > 1 ? ["Steam's GPU process crashed \(gpuCrashes) times"] : []
     }
+}
 
+extension LabResult {
     /// The pids of Windows game processes in `ps -axo pid=,command=` output (Wine shows each by its Windows path).
     static func gameProcessIDs(inProcessList text: String) -> Set<Int> {
         Set(text.split(separator: "\n").compactMap { line -> Int? in
@@ -208,6 +273,7 @@ extension GamePort {
     /// stops everything. The profile is put back exactly as it was. Results land in profiles/<id>/lab/.
     public func lab(_ profileID: String, renderer: Renderer? = nil, seconds: Int = 180,
                     steadyAfter: TimeInterval = 60, progress: ProgressHandler? = nil) async throws -> LabResult {
+        guard seconds > 0 else { throw GamePortError.invalid("Lab duration must be positive") }
         let original = try profiles.load(profileID)
         var trial = original
         if let renderer { trial.renderer = renderer }
@@ -241,6 +307,7 @@ extension GamePort {
         let bootstrapLog = steam.logs.appendingPathComponent("bootstrap_log.txt")
         func size(_ file: URL) -> UInt64 { (try? FileManager.default.attributesOfItem(atPath: file.path)[.size] as? UInt64) ?? 0 }
         let cefStart = size(cefLog), bootstrapStart = size(bootstrapLog)
+        var thermalSamples = [LabThermalState.current()].compactMap { $0 }
         _ = try steam.play()
         var front: [Bool] = []
         var gamePIDs = Set<Int>()
@@ -250,6 +317,7 @@ extension GamePort {
         for elapsed in stride(from: 30, through: seconds, by: 30) {
             try await Task.sleep(nanoseconds: 30_000_000_000)
             gamePIDs.formUnion(runningGamePIDs())
+            if let thermal = LabThermalState.current() { thermalSamples.append(thermal) }
             let app = Shell.frontmostAppName()
             front.append(app?.lowercased().contains("wine") ?? false)
             if front.last == false { progress?("Warning: \(app ?? "another app") is in front; keep the game window in front") }
@@ -259,28 +327,31 @@ extension GamePort {
         }
         if seconds % 30 != 0 { try await Task.sleep(nanoseconds: UInt64(seconds % 30) * 1_000_000_000) }
         let end = Date().timeIntervalSince1970
-        let gameExited = !gamePIDs.isEmpty && runningGamePIDs().isEmpty
+        let finalPIDs = runningGamePIDs()
+        let gameExited = !gamePIDs.isEmpty && finalPIDs.isEmpty
+        gamePIDs.formUnion(finalPIDs)
+        if let thermal = LabThermalState.current() { thermalSamples.append(thermal) }
         try runner.killAll()
         stream.terminate()
         stream.waitUntilExit()
 
         let all = MetalHUDLog.parse((try? String(contentsOf: hudLog, encoding: .utf8)) ?? "")
-        let samples = LabResult.gameSamples(all, gamePIDs: gamePIDs)
         let gameSeen = !gamePIDs.isEmpty
+        let samples = gameSeen ? LabResult.gameSamples(all, gamePIDs: gamePIDs) : []
         let frontmostShare = front.isEmpty ? nil : Double(front.filter { $0 }.count) / Double(front.count)
         // Shell.spawn starts game.log afresh for every launch, so the whole file is this run's.
         let logText = (try? String(contentsOf: gameLog, encoding: .utf8)) ?? ""
-        let crashSigns = LabResult.crashSigns(inLog: logText) + LabResult.steamCrashSigns(
-            inCEFLog: Self.tail(of: cefLog, from: cefStart), bootstrap: Self.tail(of: bootstrapLog, from: bootstrapStart))
-            + (gameExited ? ["the game exited before the end"] : [])
+        let crashSigns = LabTriage.findings(game: logText, cef: Self.tail(of: cefLog, from: cefStart),
+                                            bootstrap: Self.tail(of: bootstrapLog, from: bootstrapStart), gameExited: gameExited)
         let result = LabResult(
             profileID: profileID, recipeID: original.recipeID, renderer: runner.effectiveRenderer, sync: runner.effectiveSync,
             engineID: runner.engine.id, macOS: Shell.macOSVersionString, machine: Shell.machineDescription,
             startedAt: startedAt, seconds: seconds, verdict: LabResult.verdict(samples, end: end, frontmostShare: frontmostShare,
-                                                                         gameStarted: gameSeen, crashSigns: crashSigns),
+                                                                         gameStarted: gameSeen, crashSigns: crashSigns, gameExited: gameExited),
             steady: LabStats.from(samples, after: startedAt.timeIntervalSince1970 + steadyAfter),
             whole: LabStats.from(samples), hudLog: hudLog.lastPathComponent, frontmostShare: frontmostShare,
-            gameStarted: gameSeen, crashSigns: crashSigns, vulkanDriver: runner.effectiveVulkanDriver)
+            gameStarted: gameSeen, crashSigns: crashSigns, vulkanDriver: runner.effectiveVulkanDriver,
+            peakThermalState: LabThermalState.peak(thermalSamples))
         let encoder = JSONEncoder.pretty
         encoder.dateEncodingStrategy = .iso8601
         try encoder.encode(result).write(to: labDir.appendingPathComponent("\(stamp).json"))

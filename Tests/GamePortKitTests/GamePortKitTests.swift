@@ -484,11 +484,11 @@ final class GamePortKitTests: XCTestCase {
         // What the TF2 DXVK run wrote: Steam's web helper starting over and over, then a stack overflow.
         var log = (0..<27).map { _ in "info:  Game: steamwebhelper.exe\ninfo:  DXVK: v1.10.3" }.joined(separator: "\n")
         log += "\n020c:err:virtual:virtual_setup_exception stack overflow 832 bytes addr 0x6fffea213114"
-        let signs = LabResult.crashSigns(inLog: log)
+        let signs = LabTriage.crashSigns(inLog: log)
         XCTAssertEqual(signs, ["Steam web helper restarted 27 times", "stack overflow"])
-        XCTAssertEqual(LabResult.crashSigns(inLog: "info:  Game: steamwebhelper.exe\ninfo:  Game: steamwebhelper.exe\ninfo:  Game: tf_win64.exe"), [],
+        XCTAssertEqual(LabTriage.crashSigns(inLog: "info:  Game: steamwebhelper.exe\ninfo:  Game: steamwebhelper.exe\ninfo:  Game: tf_win64.exe"), [],
                        "two web-helper starts are normal")
-        XCTAssertEqual(LabResult.crashSigns(inLog: "wine: Unhandled page fault on read access\nwine: Unhandled page fault on read access"),
+        XCTAssertEqual(LabTriage.crashSigns(inLog: "wine: Unhandled page fault on read access\nwine: Unhandled page fault on read access"),
                        ["page fault ×2"])
 
         XCTAssertEqual(LabResult.gameProcessIDs(inProcessList: #"""
@@ -522,11 +522,11 @@ final class GamePortKitTests: XCTestCase {
 
     func testSteamGPUCrashesFromCEFLog() throws {
         let crash = "[1024:1028:1031/164855.981:ERROR:gpu_process_host.cc(1002)] GPU process exited unexpectedly: exit_code=541541187"
-        XCTAssertEqual(LabResult.steamCrashSigns(inCEFLog: crash), [], "one crash is recovered from")
-        XCTAssertEqual(LabResult.steamCrashSigns(inCEFLog: [crash, "x", crash, crash].joined(separator: "\n")),
+        XCTAssertEqual(LabTriage.steamCrashSigns(inCEFLog: crash), [], "one crash is recovered from")
+        XCTAssertEqual(LabTriage.steamCrashSigns(inCEFLog: [crash, "x", crash, crash].joined(separator: "\n")),
                        ["Steam's GPU process crashed 3 times"])
-        XCTAssertEqual(LabResult.steamCrashSigns(inCEFLog: "", bootstrap: ""), ["Steam itself never started"])
-        XCTAssertEqual(LabResult.steamCrashSigns(inCEFLog: "", bootstrap: "[2026-11-01 00:29:49] Startup - updater built"), [])
+        XCTAssertEqual(LabTriage.steamCrashSigns(inCEFLog: "", bootstrap: ""), ["Steam itself never started"])
+        XCTAssertEqual(LabTriage.steamCrashSigns(inCEFLog: "", bootstrap: "[2026-11-01 00:29:49] Startup - updater built"), [])
 
         let file = FileManager.default.temporaryDirectory.appendingPathComponent("cef-\(UUID().uuidString).txt")
         defer { try? FileManager.default.removeItem(at: file) }

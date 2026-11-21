@@ -12,7 +12,7 @@ public struct Recipe: Codable, Sendable, Equatable, Identifiable {
         case direct
     }
 
-    public enum Status: String, Codable, Sendable {
+    public enum Status: String, Codable, Sendable, CaseIterable {
         case verified      // we ran it end to end on a Mac
         case community     // reported working by others, not yet verified by us
         case untested
@@ -46,6 +46,8 @@ public struct Recipe: Codable, Sendable, Equatable, Identifiable {
     public var dllOverrides: String?
     public var launchArguments: [String]
     public var registry: [RegistryValue]
+    /// Optional fixes applied only when the player requests them.
+    public var configDefaults: ConfigPatcher.Defaults?
     public var minMacOS: String?
     public var status: Status
     public var notes: [String]
@@ -68,6 +70,7 @@ public struct Recipe: Codable, Sendable, Equatable, Identifiable {
 
     public func validate() throws {
         try validateID(id, what: "recipe id")
+        try configDefaults?.validate()
         guard schema == 1 else { throw GamePortError.unsupported("recipe schema \(schema)") }
         if launch == .direct, executable == nil { throw GamePortError.invalid("\(id): a direct launch needs an executable") }
         if let exe = executable { _ = try Archive.safeSubpath(exe) }
@@ -116,7 +119,35 @@ public struct RecipeCatalog: Sendable {
 
     public func recipe(steamAppID: Int) -> Recipe? { recipes.values.first { $0.steamAppID == steamAppID } }
 
-    public var sorted: [Recipe] { recipes.values.sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending } }
+    public var sorted: [Recipe] {
+        recipes.values.sorted {
+            let order = $0.title.localizedCaseInsensitiveCompare($1.title)
+            return order == .orderedSame ? $0.id < $1.id : order == .orderedAscending
+        }
+    }
+}
+
+/// Filters an already sorted catalog so typing in the sidebar never reloads or reorders it.
+public struct RecipeFilter {
+    public var query = ""
+    public var status: Recipe.Status?
+    public var renderer: Renderer?
+
+    public init() {}
+
+    public func apply(to recipes: [Recipe]) -> [Recipe] {
+        func fold(_ s: String) -> String {
+            s.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: Locale(identifier: "en_US_POSIX"))
+        }
+        let words = fold(query).split(whereSeparator: \.isWhitespace)
+        return recipes.filter { recipe in
+            guard status == nil || recipe.status == status, renderer == nil || recipe.renderer == renderer else { return false }
+            if words.isEmpty { return true }
+            let names = fold(recipe.title + " " + recipe.id)
+            let appID = recipe.steamAppID.map(String.init)
+            return words.allSatisfy { names.contains($0) || String($0) == appID }
+        }
+    }
 }
 
 /// Converts highball-db recipes (CC0, github.com/gauthierpiarrette/highball-db) into ours.

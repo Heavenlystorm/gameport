@@ -1,0 +1,16 @@
+name: Track B verification
+on:
+  push:
+    branches: [verify-track-b]
+permissions:
+  contents: read
+jobs:
+  d3d12:
+    runs-on: macos-15
+    timeout-minutes: 35
+    env:
+      GAMEPORT_BUILD: ${{ runner.temp }}/gameport-build
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash Scripts/build-vkd3d-proton.sh
+      - run: file "$GAMEPORT_BUILD"/*/overlay/x86_64-windows/*.dll
